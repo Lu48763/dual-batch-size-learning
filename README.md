@@ -11,11 +11,11 @@
 ## Installation
 1. Create a conda virtual environment and install required packages:
     ```
-    conda create -n hdbl -c pytorch -c nvidia python=3.11 tensorflow=2.13 pytorch=2.1 pytorch-cuda=12.1 
+    conda create -n hdbl -c pytorch -c nvidia python=3.11 tensorflow=2.13 pytorch=2.1 pytorch-cuda=12.1 cuda-nvcc=11.8
     ```
 2. (Optional) Install additional packages for data analysis:
     ```
-    conda install -n hdbl matplotlib scikit-learn jupyterlab
+    conda install -n hdbl matplotlib scikit-learn jupyterlab typing_extensions
     ```
 3. Activate the virtual environment:
     ```
