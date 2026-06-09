@@ -7,6 +7,7 @@
 - tensorflow 2.13
 - pytorch 2.1
 - pytorch-cuda 12.1
+- cuda-nvcc 11.8
 
 ## Installation
 1. Create a conda virtual environment and install required packages:
