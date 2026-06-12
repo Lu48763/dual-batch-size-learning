@@ -115,7 +115,7 @@ parser.add_argument(
     '--temp',
     dest='temp',
     action='store_true',
-    help='do not save the temporary files during training, including "_model" and ".npy"',
+    help='save checkpoints/temporary files at milestones during training, and delete them when training completes',
 )
 parser.add_argument(
     '--no-save',
@@ -134,7 +134,7 @@ def run_server(args):
             rpc.rpc_async(
                 f'worker_{i}',
                 run_worker,
-                args=(ps_rref, args, i, True if i <= args.small else False),
+                args=(ps_rref, args, i, i <= args.small),
             )
         )
     torch.futures.wait_all(future_list)

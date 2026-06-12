@@ -8,12 +8,12 @@ from tensorflow import keras
 ## "True" for TF 2.6 and other older versions, "False" for newer versions
 ## Support weight_dacay via keras.model instead of keras.optimizers
 ### the accuracy is so suck without kernel_regularizer, just use it
-OLD_VERSION = True
+OLD_VERSION = False
 weight_decay = 1e-4
 
 mean = [0.485, 0.456, 0.406]
-std = [0.299, 0.224, 0.225]
-var = [0.089401, 0.050176, 0.050625] # tf.math.square(std)
+std = [0.229, 0.224, 0.225]
+var = [0.052441, 0.050176, 0.050625] # tf.math.square(std)
 cifar_dataset_list = ['cifar10', 'cifar100']
 imagenet_dataset_list = ['imagenet']
 dataset_list = cifar_dataset_list + imagenet_dataset_list
@@ -127,16 +127,14 @@ def build_resnet(
     depth: int,
     dropout_rate: float,
     resolution: int,
-    TEST_KERNEL_REGULARIZERS=keras.regularizers.L2(weight_decay) if OLD_VERSION else None
 ) -> keras.Model:
     if dataset not in dataset_list:
         raise ValueError(f'Invalid dataset "{dataset}", it should be in {dataset_list}.')
     if depth not in depth_list:
         raise ValueError(f'Invalid depth "{depth}", it should be in {depth_list}.')
-    if 'cifar' in dataset and resolution not in cifar_resolution_list:
-        raise ValueError(f'Invalid resolution "{resolution}", it should be in {cifar_resolution_list}.')
-    if 'imagenet' in dataset and resolution not in imagenet_resolution_list:
-        raise ValueError(f'Invalid resolution "{resolution}", it should be in {imagenet_resolution_list}.')
+    
+    # Kernel regularizer setup
+    kernel_regularizer = keras.regularizers.L2(weight_decay) if OLD_VERSION else None
     
     if dataset == 'cifar10':
         classes = 10
@@ -145,37 +143,34 @@ def build_resnet(
     elif dataset == 'imagenet':
         classes = 1000
     
-    if depth == 18:
-        stack_list = [2, 2, 2, 2]
-    elif depth == 34:
-        stack_list = [3, 4, 6, 3]
+    stack_list = [2, 2, 2, 2] if depth == 18 else [3, 4, 6, 3]
     
     def basic_block(x: keras.Input, filters: int, conv_shortcut: bool = False):
         if conv_shortcut:
             shortcut = keras.layers.Conv2D(
                 filters, 1, strides=2, use_bias=False,
                 kernel_initializer='he_normal',
-                kernel_regularizer=TEST_KERNEL_REGULARIZERS
+                kernel_regularizer=kernel_regularizer
             )(x)
             shortcut = keras.layers.BatchNormalization(momentum=0.9, epsilon=1.001e-5)(shortcut)
             x = keras.layers.Conv2D(
                 filters, 3, strides=2, padding='same', use_bias=False,
                 kernel_initializer='he_normal',
-                kernel_regularizer=TEST_KERNEL_REGULARIZERS
+                kernel_regularizer=kernel_regularizer
             )(x)
         else:
             shortcut = x
             x = keras.layers.Conv2D(
                 filters, 3, padding='same', use_bias=False,
                 kernel_initializer='he_normal',
-                kernel_regularizer=TEST_KERNEL_REGULARIZERS
+                kernel_regularizer=kernel_regularizer
             )(x)
         x = keras.layers.BatchNormalization(momentum=0.9, epsilon=1.001e-5)(x)
         x = keras.layers.Activation('relu')(x)
         x = keras.layers.Conv2D(
             filters, 3, padding='same', use_bias=False,
             kernel_initializer='he_normal',
-            kernel_regularizer=TEST_KERNEL_REGULARIZERS
+            kernel_regularizer=kernel_regularizer
         )(x)
         x = keras.layers.BatchNormalization(momentum=0.9, epsilon=1.001e-5)(x)
         x = keras.layers.Add()([shortcut, x])
@@ -184,30 +179,28 @@ def build_resnet(
     
     def basic_stack(x: keras.Input, filters: int, stack: int, conv_shortcut: bool = False):
         for i in range(stack):
-            if i == 0 and conv_shortcut == True:
+            if i == 0 and conv_shortcut:
                 filters *= 2
-                x = basic_block(x, filters, conv_shortcut)
+                x = basic_block(x, filters, True)
             else:
                 x = basic_block(x, filters)
         return x, filters
     
     inputs = keras.Input(shape=(resolution, resolution, 3))
+    
+    # Data augmentation and normalization
+    x = keras.layers.RandomFlip('horizontal')(inputs)
+    x = keras.layers.RandomRotation(0.05)(x)
+    x = keras.layers.RandomZoom(0.25)(x)
+    x = keras.layers.Rescaling(1/255)(x)
+    x = keras.layers.Normalization(mean=mean, variance=var)(x)
+    
     filters = 64
-    ## simple augmentation pipeline
-    simple_aug = keras.Sequential([
-        keras.layers.RandomFlip('horizontal'),
-        keras.layers.RandomRotation(0.05),
-        keras.layers.RandomZoom(0.25),
-        keras.layers.Rescaling(1/255),
-        keras.layers.Normalization(mean=mean, variance=var)
-    ])
-    x = simple_aug(inputs)
-    ## stem
     if 'cifar' in dataset:
         x = keras.layers.Conv2D(
             filters, 3, padding='same', use_bias=False,
             kernel_initializer='he_normal',
-            kernel_regularizer=TEST_KERNEL_REGULARIZERS
+            kernel_regularizer=kernel_regularizer
         )(x)
         x = keras.layers.BatchNormalization(momentum=0.9, epsilon=1.001e-5)(x)
         x = keras.layers.Activation('relu')(x)
@@ -215,26 +208,25 @@ def build_resnet(
         x = keras.layers.Conv2D(
             filters, 7, strides=2, padding='same', use_bias=False,
             kernel_initializer='he_normal',
-            kernel_regularizer=TEST_KERNEL_REGULARIZERS
+            kernel_regularizer=kernel_regularizer
         )(x)
         x = keras.layers.BatchNormalization(momentum=0.9, epsilon=1.001e-5)(x)
         x = keras.layers.Activation('relu')(x)
         x = keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(x)
-    ## trunk
+
     for i, stack in enumerate(stack_list):
-        if i == 0:
-            x, filters = basic_stack(x, filters, stack)
-        else:
-            x, filters = basic_stack(x, filters, stack, True)
-    ## classifier
+        x, filters = basic_stack(x, filters, stack, conv_shortcut=(i > 0))
+    
     x = keras.layers.GlobalAveragePooling2D()(x)
-    x = keras.layers.Dropout(dropout_rate)(x)
+    if dropout_rate > 0:
+        x = keras.layers.Dropout(dropout_rate)(x)
     outputs = keras.layers.Dense(
         classes, activation='softmax',
-        kernel_regularizer=TEST_KERNEL_REGULARIZERS
+        kernel_regularizer=kernel_regularizer
     )(x)
     
     return keras.Model(inputs=inputs, outputs=outputs)
+
 
 
 def load_data(
@@ -263,15 +255,19 @@ def modify_resnet(
     resolution: int,
     old_model: Optional[keras.Model] = None
 ) -> keras.Model:
+    # Retrieve weights before clearing the session to prevent reference invalidation
+    weights = old_model.get_weights() if old_model else None
+    
+    # Clear session to prevent memory leaks when switching resolutions/models
     keras.backend.clear_session()
+    
     new_model = build_resnet(
         dataset=dataset,
         depth=depth,
         dropout_rate=dropout_rate,
         resolution=resolution,
-        TEST_KERNEL_REGULARIZERS=keras.regularizers.L2(weight_decay) if OLD_VERSION else None
     )
-    if old_model:
-        new_model.set_weights(old_model.get_weights())
+    if weights:
+        new_model.set_weights(weights)
     
     return new_model
