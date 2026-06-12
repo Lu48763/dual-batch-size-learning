@@ -22,7 +22,7 @@ cifar_resolution_list = [16, 24, 32]
 imagenet_resolution_list = [160, 224, 288]
 
 
-def load_cifar(resolution: int, batch_size: int, dataset: str, val_batch_size: int):
+def load_cifar(resolution: int, batch_size: int, dataset: str, val_batch_size: int, num_shards: int = 1, shard_rank: int = 0):
     if resolution not in cifar_resolution_list:
         raise ValueError(f'Invalid resolution "{resolution}", it should be in {cifar_resolution_list}.')
     if dataset not in cifar_dataset_list:
@@ -42,6 +42,8 @@ def load_cifar(resolution: int, batch_size: int, dataset: str, val_batch_size: i
     dataloader = {
         'train': (
             tf.data.Dataset.from_tensor_slices((x_train, y_train))
+            .shard(num_shards, shard_rank)
+            .repeat() # Ensure enough data for additional-time-ratio
             .map(
                 lambda x, y: (preprocessing_map(x), y),
                 num_parallel_calls=tf.data.AUTOTUNE
@@ -53,6 +55,7 @@ def load_cifar(resolution: int, batch_size: int, dataset: str, val_batch_size: i
         ),
         'val': (
             tf.data.Dataset.from_tensor_slices((x_test, y_test))
+            # Removed .shard() to ensure global evaluation on every worker
             .map(
                 lambda x, y: (preprocessing_map(x), y),
                 num_parallel_calls=tf.data.AUTOTUNE
@@ -66,25 +69,9 @@ def load_cifar(resolution: int, batch_size: int, dataset: str, val_batch_size: i
     return dataloader
 
 
-def load_imagenet(resolution: int, batch_size: int, dir_path: str, val_batch_size: int):
+def load_imagenet(resolution: int, batch_size: int, dir_path: str, val_batch_size: int, num_shards: int = 1, shard_rank: int = 0):
     if resolution not in imagenet_resolution_list:
         raise ValueError(f'Invalid resolution "{resolution}", it should be in {imagenet_resolution_list}.')
-    
-    '''
-    # keras.utils.image_dataset_from_directory() can not allow simple augmentation pipeline
-    # simple augmentation pipeline == keras.layers.RandomXXX()
-    # move simple augmentation pipeline to build_model
-    simple_aug = keras.Sequential([
-        keras.layers.RandomFlip('horizontal'),
-        keras.layers.RandomRotation(0.05),
-        keras.layers.RandomZoom(0.25)
-    ])
-    '''
-    
-    #def preprocessing_map(image):
-    #    transform = keras.Sequential([
-    #    ])
-    #    return transform(image)
     
     dataloader = {
         'train': (
@@ -93,13 +80,11 @@ def load_imagenet(resolution: int, batch_size: int, dir_path: str, val_batch_siz
                 label_mode='int', # for keras.losses.SparseCategoricalCrossentropy()
                 batch_size=batch_size,
                 image_size=(resolution, resolution),
-                shuffle=True
+                shuffle=True,
+                seed=48763 # Fixed seed ensures unique shards across nodes with identical datasets
             )
-            #.map(
-            #    lambda x, y: (preprocessing_map(x), y),
-            #    num_parallel_calls=tf.data.AUTOTUNE
-            #)
-            #.cache() # tf.data.cache() is a bomb, causing excessive memory usage when training imagenet
+            .shard(num_shards, shard_rank)
+            .repeat() # Ensure enough data for additional-time-ratio
             .prefetch(buffer_size=tf.data.AUTOTUNE)
         ),
         'val': (
@@ -110,11 +95,7 @@ def load_imagenet(resolution: int, batch_size: int, dir_path: str, val_batch_siz
                 image_size=(resolution, resolution),
                 shuffle=False
             )
-            #.map(
-            #    lambda x, y: (preprocessing_map(x), y),
-            #    num_parallel_calls=tf.data.AUTOTUNE
-            #)
-            #.cache() # tf.data.cache() is a bomb, causing excessive memory usage when training imagenet
+            # Removed .shard() to ensure global evaluation on every worker
             .prefetch(buffer_size=tf.data.AUTOTUNE)
         )
     }
@@ -234,16 +215,18 @@ def load_data(
     batch_size: int,
     dataset: str,
     dir_path: Optional[str] = None,
-    val_batch_size: Optional[int] = None
+    val_batch_size: Optional[int] = None,
+    num_shards: int = 1,
+    shard_rank: int = 0
 ):
     if val_batch_size == None:
         val_batch_size = batch_size
     if 'cifar' in dataset:
-        return load_cifar(resolution=resolution, batch_size=batch_size, dataset=dataset, val_batch_size=val_batch_size)
+        return load_cifar(resolution=resolution, batch_size=batch_size, dataset=dataset, val_batch_size=val_batch_size, num_shards=num_shards, shard_rank=shard_rank)
     elif dataset == 'imagenet':
         if dir_path == None:
             raise ValueError(f'Invalid directory path "{dir_path}".')
-        return load_imagenet(resolution=resolution, batch_size=batch_size, dir_path=dir_path, val_batch_size=val_batch_size)
+        return load_imagenet(resolution=resolution, batch_size=batch_size, dir_path=dir_path, val_batch_size=val_batch_size, num_shards=num_shards, shard_rank=shard_rank)
     else:
         raise ValueError(f'Invalid dataset "{dataset}", it should be in {dataset_list}.')
 

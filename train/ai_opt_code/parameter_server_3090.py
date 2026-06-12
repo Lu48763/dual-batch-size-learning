@@ -105,13 +105,13 @@ class Server(object):
         num_large = num_total - num_small
         
         large_data_amount = round(self.args.time_ratio * self.total_data_amount / num_total) if num_small else round(self.total_data_amount / num_total)
-        small_data_amount = round((self.total_data_amount - large_data_amount * num_large) / num_small) if num_small else 0
+        small_data_amount = max(0, round((self.total_data_amount - large_data_amount * num_large) / num_small)) if num_small else 0
         
         small_batch_size_ls = []
         for large_batch_size, intercept, coef in zip(self.large_batch_size_ls, self.intercept_ls, self.coef_ls):
             time_origin = (coef + intercept / large_batch_size) * self.total_data_amount / num_total
             time_new = self.args.time_ratio * time_origin
-            if num_small:
+            if num_small and small_data_amount > 0:
                 # Calculate required BS, ensuring denominator is not too close to zero
                 denominator = (time_new / small_data_amount - coef)
                 if denominator > 1e-6:
@@ -231,13 +231,15 @@ class Worker(object):
                 self.step_ID = self.parameter['global_step_ID']
                 self.stage_ID = self.parameter['global_stage_ID']
                 
-                # Update dataloader
+                # Update dataloader with sharding
                 self.dataloader = tf_data_model.load_data(
                     resolution=self.parameter['resolution'],
                     batch_size=self.parameter['small_batch_size'] if self.is_small_batch else self.parameter['large_batch_size'],
                     dataset=self.args.dataset,
                     dir_path=self.args.dir_path,
                     val_batch_size=self.parameter['large_batch_size'],
+                    num_shards=self.args.world_size - 1,
+                    shard_rank=self.rank - 1
                 )
                 
                 # Update model structure and transfer weights
