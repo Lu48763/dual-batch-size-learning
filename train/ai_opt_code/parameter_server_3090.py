@@ -37,7 +37,7 @@ class Server(object):
                 [0.00025895413494090355, 0.00045862692849402506, 0.0007576280737663753] if args.xla
                 else [0.0003013537830804257, 0.0005683767808602767, 0.0009387165655225843]
             )
-            self.large_batch_size_ls = [2800, 1400, 900] if args.xla else [2330, 1110, 740]
+            self.large_batch_size_ls = [2800, 1400, 900] if args.xla else [2130, 960, 640]
         else:
             raise ValueError('The ImageNet training process only supports "--amp"')
             
