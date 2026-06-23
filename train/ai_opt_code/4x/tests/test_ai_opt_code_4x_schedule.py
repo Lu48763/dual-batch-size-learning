@@ -9,13 +9,61 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE_PATH = ROOT / "4x" / "parameter_server_3090.py"
-MAIN_PATH = ROOT / "4x" / "main_3090.py"
+MODULE_PATH = ROOT / "parameter_server_3090.py"
+MAIN_PATH = ROOT / "main_3090.py"
+
+FAKE_TRAIN_DATASETS = []
+FAKE_FIT_INPUTS = []
+FAKE_FIT_STEPS = []
+
+
+class FakeTrainIterator:
+    def __init__(self, dataset):
+        self.dataset = dataset
+        self.steps_consumed = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        raise StopIteration
+
+
+class FakeTrainDataset:
+    def __init__(self):
+        self.iterator = FakeTrainIterator(self)
+        self.iter_calls = 0
+        self.take_calls = 0
+
+    def __iter__(self):
+        self.iter_calls += 1
+        return self.iterator
+
+    def take(self, _steps):
+        self.take_calls += 1
+        raise AssertionError("split sync training must not restart the dataset with take()")
 
 
 class FakeModel:
     def __init__(self):
         self._weights = [np.array([1.0]), np.array([2.0])]
+
+    def compile(self, **_kwargs):
+        return None
+
+    def fit(self, data, steps_per_epoch=None, verbose=None, callbacks=None):
+        if steps_per_epoch is None:
+            raise AssertionError("streaming iterator training requires explicit steps_per_epoch")
+        FAKE_FIT_INPUTS.append(data)
+        FAKE_FIT_STEPS.append(steps_per_epoch)
+        if hasattr(data, "steps_consumed"):
+            data.steps_consumed += steps_per_epoch
+        for callback in callbacks or []:
+            callback.history = [0.25]
+        return SimpleNamespace(history={"loss": [1.0], "accuracy": [0.5]})
+
+    def evaluate(self, *_args, **_kwargs):
+        return {"loss": 1.2, "accuracy": 0.6}
 
     def get_weights(self):
         return [weight.copy() for weight in self._weights]
@@ -34,8 +82,15 @@ class FakeRRef:
     def local_value(self):
         return self._value
 
+    def owner(self):
+        return "server_0"
+
 
 def install_stubs():
+    FAKE_TRAIN_DATASETS.clear()
+    FAKE_FIT_INPUTS.clear()
+    FAKE_FIT_STEPS.clear()
+
     keras_mod = types.ModuleType("tensorflow.keras")
     keras_mod.callbacks = SimpleNamespace(Callback=object)
     keras_mod.optimizers = SimpleNamespace(
@@ -54,6 +109,13 @@ def install_stubs():
     torch_mod.distributed = distributed_mod
 
     tf_data_model_mod = types.ModuleType("tf_data_model")
+
+    def fake_load_data(**_kwargs):
+        train_dataset = FakeTrainDataset()
+        FAKE_TRAIN_DATASETS.append(train_dataset)
+        return {"train": train_dataset, "val": object()}
+
+    tf_data_model_mod.load_data = fake_load_data
     tf_data_model_mod.modify_resnet = lambda **_kwargs: FakeModel()
 
     parameter_server_mod = types.ModuleType("parameter_server_3090")
@@ -90,6 +152,7 @@ def load_main_module():
 def make_args(**overrides):
     args = {
         "dataset": "imagenet",
+        "dir_path": "/data",
         "amp": True,
         "xla": False,
         "world_size": 5,
@@ -220,6 +283,51 @@ class FourXScheduleTest(unittest.TestCase):
         )
 
         self.assertEqual(server.history["worker_ID"], [])
+
+    def test_worker_consumes_continuous_train_iterator_for_split_syncs(self):
+        module = load_parameter_server_module()
+        args = make_args(small=0)
+        weights = [np.array([1.0]), np.array([2.0])]
+        parameter = {
+            "global_step_ID": 0,
+            "learning_rate": 0.1,
+            "global_stage_ID": 0,
+            "large_batch_size": 2,
+            "small_batch_size": 1,
+            "resolution": 160,
+            "dropout_rate": 0.1,
+            "momentum": 0.9,
+            "weight_decay": 1e-4,
+            "sync_frequency_multiplier": 4,
+            "large_data_amount": 8,
+            "small_data_amount": 4,
+        }
+        calls = {"sync": 0, "history": 0}
+
+        def fake_rpc_sync(_owner, _func, kwargs):
+            if "record" in kwargs:
+                calls["history"] += 1
+                return None
+            if kwargs["worker_weights"] == [0]:
+                return weights, parameter, -1, False
+
+            calls["sync"] += 1
+            return weights, parameter, calls["sync"] - 1, calls["sync"] >= 4
+
+        module.rpc.rpc_sync = fake_rpc_sync
+
+        worker = module.Worker(FakeRRef(None), args, rank=1, is_small_batch=False)
+        worker.train()
+
+        self.assertEqual(calls["sync"], 4)
+        self.assertEqual(calls["history"], 1)
+        self.assertEqual(FAKE_FIT_STEPS, [1, 1, 1, 1])
+        self.assertEqual(len(FAKE_TRAIN_DATASETS), 1)
+        self.assertEqual(FAKE_TRAIN_DATASETS[0].iter_calls, 1)
+        self.assertEqual(FAKE_TRAIN_DATASETS[0].take_calls, 0)
+        self.assertEqual(FAKE_TRAIN_DATASETS[0].iterator.steps_consumed, 4)
+        self.assertEqual(len({id(data) for data in FAKE_FIT_INPUTS}), 1)
+        self.assertIs(FAKE_FIT_INPUTS[0], FAKE_TRAIN_DATASETS[0].iterator)
 
 
 if __name__ == "__main__":

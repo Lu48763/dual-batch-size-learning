@@ -22,6 +22,7 @@ python main_3090.py -r=1 -w=5 -s=2 -a=${SERVER_IP} -d=imagenet -p=/data -t=1.05 
 - Learning-rate milestones remain at paper epochs 60, 90, and 105.
 - Resolution/dropout cycle milestones remain at paper epochs 20, 40, 60, 70, 80, 90, 95, 100, and 105.
 - Each worker splits the original mini-epoch training steps across the configured number of syncs.
+- Split syncs consume a persistent train iterator, so each partial sync continues from the previous batch instead of rereading the dataset prefix.
 - Validation and history logging run only once per original mini-epoch, not once per internal sync.
 - Output filenames include `_fN`, where `N` is the sync multiplier.
 

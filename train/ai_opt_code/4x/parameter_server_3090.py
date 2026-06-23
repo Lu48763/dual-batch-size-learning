@@ -237,6 +237,7 @@ class Worker(object):
         
         self.parameter = None
         self.dataloader = None
+        self.train_iterator = None
         self.model = None
         self.verbose = 2
         self.pending_train_loss = 0.0
@@ -279,6 +280,8 @@ class Worker(object):
                     num_shards=self.args.world_size - 1,
                     shard_rank=self.rank - 1
                 )
+                # Keep split syncs on a continuous stream instead of restarting at the dataset head.
+                self.train_iterator = iter(self.dataloader['train'])
                 
                 # Update model structure and transfer weights
                 self.model = tf_data_model.modify_resnet(
@@ -318,7 +321,8 @@ class Worker(object):
             )
             
             train_logs = self.model.fit(
-                self.dataloader['train'].take(steps_per_epoch),
+                self.train_iterator,
+                steps_per_epoch=steps_per_epoch,
                 verbose=self.verbose,
                 callbacks=[self.time_callback],
             )
