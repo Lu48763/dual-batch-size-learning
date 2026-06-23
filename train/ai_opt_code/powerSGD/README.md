@@ -5,14 +5,14 @@ It keeps the existing TensorFlow/Keras training loop and PyTorch RPC parameter-s
 
 ## Scope
 
-This is not a PyTorch DDP rewrite. PyTorch's built-in `powerSGD_hook` only applies to DDP gradient communication, while this code trains Keras models and uses RPC to push worker model updates. The implementation here keeps the original RPC flow and compresses local weight deltas before they are sent to the server.
+This is not a PyTorch DDP rewrite. PyTorch's built-in `powerSGD_hook` only applies to DDP gradient communication, while this code trains Keras models and uses RPC to push worker model updates. The implementation here keeps the original RPC flow and compresses worker model weights before they are sent to the server.
 
 ## Current Status
 
 - [x] Keep the original `main_3090.py`, `parameter_server_3090.py`, and `tf_data_model.py` structure.
 - [x] Add CLI controls for enabling/disabling PowerSGD-style compression.
-- [x] Compress worker local deltas with low-rank factors after a configurable warmup.
-- [x] Decompress deltas on the server and apply them to the current global model.
+- [x] Compress worker model weights with low-rank factors after a configurable warmup.
+- [x] Decompress approximate worker weights on the server and apply the original weighted-average update.
 - [x] Keep full-weight communication available through `--no-powersgd`.
 - [x] Add unit tests for CLI parsing, payload compression, warmup fallback, and server update behavior.
 - [ ] Run a multi-process or multi-node training smoke test on the target machines.
@@ -25,10 +25,9 @@ Each worker keeps the same training loop:
 
 1. Pull global weights and training parameters from the RPC server.
 2. Train locally for one mini-epoch.
-3. Compute `delta = local_weights - pulled_global_weights`.
-4. If PowerSGD is active for the current local commit, compress eligible tensors into low-rank factors.
-5. Send the payload to the server.
-6. The server decompresses deltas and applies a weighted update to the current global model.
+3. If PowerSGD is active for the current local commit, compress eligible worker weight tensors into low-rank factors.
+4. Send the payload to the server.
+5. The server decompresses approximate worker weights and applies the same weighted-average update used by the original parameter-server code.
 
 Small tensors, vectors, warmup iterations, and disabled PowerSGD runs use the original full-weight communication path.
 
@@ -63,6 +62,6 @@ python3 -m py_compile train/ai_opt_code/powerSGD/main_3090.py train/ai_opt_code/
 
 ## Notes
 
-- The compressed path applies local deltas to the current server weights. This is the RPC-layer analogue of compressing communication updates while preserving asynchronous parameter-server behavior.
+- The compressed path preserves the original server weighted-average formula; only the communicated worker tensors are approximated.
 - Rank and compression threshold should be tuned. Low ranks reduce communication but increase approximation error.
 - Multi-node performance and accuracy still need real training validation.

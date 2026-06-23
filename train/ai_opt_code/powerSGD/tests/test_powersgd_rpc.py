@@ -160,10 +160,10 @@ class PowerSGDRpcTest(unittest.TestCase):
             use_error_feedback=False,
             seed=123,
         )
-        delta = np.arange(36, dtype=np.float32).reshape(6, 6)
+        weight = np.arange(36, dtype=np.float32).reshape(6, 6)
 
         payloads, residuals = module.build_powerSGD_payload(
-            [delta],
+            [weight],
             config=config,
             iteration=0,
             error_feedback=None,
@@ -172,8 +172,8 @@ class PowerSGDRpcTest(unittest.TestCase):
 
         self.assertIsNone(residuals)
         self.assertEqual(payloads[0]["kind"], "low_rank")
-        self.assertEqual(restored.shape, delta.shape)
-        self.assertLess(np.linalg.norm(delta - restored), np.linalg.norm(delta))
+        self.assertEqual(restored.shape, weight.shape)
+        self.assertLess(np.linalg.norm(weight - restored), np.linalg.norm(weight))
 
     def test_warmup_sends_raw_worker_weights(self):
         module = load_parameter_server_module()
@@ -199,7 +199,7 @@ class PowerSGDRpcTest(unittest.TestCase):
         self.assertIs(payload, worker_weights)
         self.assertEqual(residuals, [])
 
-    def test_server_applies_decompressed_powersgd_delta(self):
+    def test_server_applies_decompressed_powersgd_weights(self):
         module = load_parameter_server_module()
         config = module.PowerSGDConfig(
             enabled=True,
@@ -230,6 +230,8 @@ class PowerSGDRpcTest(unittest.TestCase):
             error_feedback=None,
         )
 
+        self.assertEqual(payload["payload_type"], "powersgd_weights")
+
         module.Server.sync_step(
             FakeRRef(server),
             payload,
@@ -240,6 +242,48 @@ class PowerSGDRpcTest(unittest.TestCase):
         updated_weights = server.global_model.get_weights()
         np.testing.assert_allclose(updated_weights[0], np.full((4, 4), 0.5, dtype=np.float32), atol=1e-5)
         np.testing.assert_allclose(updated_weights[1], np.full((4,), 0.5, dtype=np.float32), atol=1e-5)
+
+    def test_compressed_update_preserves_original_weight_averaging_with_stale_server(self):
+        module = load_parameter_server_module()
+        config = module.PowerSGDConfig(
+            enabled=True,
+            rank=4,
+            start_iter=0,
+            min_compression_size=4,
+            use_error_feedback=False,
+            seed=123,
+        )
+        server = module.Server(make_args(small=0))
+        server.global_model.set_weights([
+            np.full((4, 4), 10.0, dtype=np.float32),
+            np.full((4,), 10.0, dtype=np.float32),
+        ])
+        pulled_global_weights = [
+            np.zeros((4, 4), dtype=np.float32),
+            np.zeros((4,), dtype=np.float32),
+        ]
+        worker_weights = [
+            np.ones((4, 4), dtype=np.float32),
+            np.ones((4,), dtype=np.float32),
+        ]
+        payload, _ = module.build_worker_payload(
+            worker_weights,
+            pulled_global_weights,
+            config=config,
+            iteration=0,
+            error_feedback=None,
+        )
+
+        module.Server.sync_step(
+            FakeRRef(server),
+            payload,
+            rank=1,
+            is_small_batch=False,
+        )
+
+        updated_weights = server.global_model.get_weights()
+        np.testing.assert_allclose(updated_weights[0], np.full((4, 4), 5.5, dtype=np.float32), atol=1e-5)
+        np.testing.assert_allclose(updated_weights[1], np.full((4,), 5.5, dtype=np.float32), atol=1e-5)
 
 
 if __name__ == "__main__":

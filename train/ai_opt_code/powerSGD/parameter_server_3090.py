@@ -89,21 +89,21 @@ def decompress_powerSGD_payload(payloads):
     return arrays
 
 
-def build_powerSGD_payload(deltas, config, iteration, error_feedback=None):
+def build_powerSGD_payload(arrays, config, iteration, error_feedback=None):
     payloads = []
     residuals = [] if config.use_error_feedback else None
 
-    for tensor_index, delta in enumerate(deltas):
-        corrected_delta = np.asarray(delta)
+    for tensor_index, array in enumerate(arrays):
+        corrected_array = np.asarray(array)
         if config.use_error_feedback and error_feedback and tensor_index < len(error_feedback):
-            corrected_delta = corrected_delta + error_feedback[tensor_index]
+            corrected_array = corrected_array + error_feedback[tensor_index]
 
-        payload = _low_rank_payload(corrected_delta, config, iteration, tensor_index)
+        payload = _low_rank_payload(corrected_array, config, iteration, tensor_index)
         payloads.append(payload)
 
         if config.use_error_feedback:
-            restored_delta = decompress_powerSGD_payload([payload])[0]
-            residuals.append(corrected_delta - restored_delta)
+            restored_array = decompress_powerSGD_payload([payload])[0]
+            residuals.append(corrected_array - restored_array)
 
     return payloads, residuals
 
@@ -112,32 +112,27 @@ def build_worker_payload(worker_weights, global_weights, config, iteration, erro
     if not config.enabled or iteration < config.start_iter:
         return worker_weights, error_feedback
 
-    deltas = [
-        np.asarray(worker_weight) - np.asarray(global_weight)
-        for worker_weight, global_weight in zip(worker_weights, global_weights)
-    ]
     payloads, residuals = build_powerSGD_payload(
-        deltas,
+        worker_weights,
         config=config,
         iteration=iteration,
         error_feedback=error_feedback,
     )
     return {
-        'payload_type': 'powersgd_delta',
+        'payload_type': 'powersgd_weights',
         'payloads': payloads,
     }, residuals
 
 
 def is_powerSGD_payload(payload):
-    return isinstance(payload, dict) and payload.get('payload_type') == 'powersgd_delta'
+    return isinstance(payload, dict) and payload.get('payload_type') == 'powersgd_weights'
 
 
 def apply_powerSGD_payload(server_weights, payload, update_factor):
-    deltas = decompress_powerSGD_payload(payload['payloads'])
-    update_ratio = update_factor / (1.0 + update_factor)
+    worker_weights = decompress_powerSGD_payload(payload['payloads'])
     return [
-        server_weight + update_ratio * delta.astype(server_weight.dtype, copy=False)
-        for server_weight, delta in zip(server_weights, deltas)
+        (server_weight + update_factor * worker_weight.astype(server_weight.dtype, copy=False)) / (1.0 + update_factor)
+        for server_weight, worker_weight in zip(server_weights, worker_weights)
     ]
 
 

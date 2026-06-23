@@ -140,7 +140,7 @@ parser.add_argument(
     '--powersgd-start-iter',
     type=int,
     default=2,
-    help='local commit ID at which workers start sending PowerSGD compressed deltas',
+    help='local commit ID at which workers start sending PowerSGD compressed weights',
 )
 parser.add_argument(
     '--powersgd-min-compression-size',
