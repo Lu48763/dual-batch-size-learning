@@ -21,6 +21,9 @@ class Server(object):
         self.mission_complete = False
         self.parameter_lock = threading.Lock()
         self.global_model_lock = threading.Lock()
+        self.prefetch_buffer_size = getattr(args, 'prefetch_buffer_size', -1)
+        if self.prefetch_buffer_size != -1 and self.prefetch_buffer_size < 1:
+            raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
         
         self.epochs = 105
         self.steps = 3
@@ -95,6 +98,7 @@ class Server(object):
             'dropout_rate': self.dropout_rate_ls[self.stage_idx % len(self.dropout_rate_ls)],
             'momentum': 0.9,
             'weight_decay': 1e-4,
+            'prefetch_buffer_size': self.prefetch_buffer_size,
             'large_data_amount': self.large_data_amount,
             'small_data_amount': self.small_data_amount,
         }
@@ -239,7 +243,8 @@ class Worker(object):
                     dir_path=self.args.dir_path,
                     val_batch_size=self.parameter['large_batch_size'],
                     num_shards=self.args.world_size - 1,
-                    shard_rank=self.rank - 1
+                    shard_rank=self.rank - 1,
+                    prefetch_buffer_size=self.parameter['prefetch_buffer_size']
                 )
                 
                 # Update model structure and transfer weights

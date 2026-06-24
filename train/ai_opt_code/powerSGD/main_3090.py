@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser(
         'If the user wants to adjust low-level control options, modify the code. '
         'Required settings [--rank, --world-size, --num-small, --server-addr, --dataset, --dir-path, --time-ratio] '
         'or [-r, -w, -s, -a, -d, -p, -t], '
-        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --no-powersgd, --powersgd-rank].'
+        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --no-powersgd, --powersgd-rank, --prefetch-buffer-size].'
     ),
     formatter_class=CustomFormatter,
 )
@@ -160,6 +160,14 @@ parser.add_argument(
     default=48763,
     help='random seed used for deterministic PowerSGD sketches',
 )
+parser.add_argument(
+    '--prefetch-buffer-size',
+    dest='prefetch_buffer_size',
+    default=-1,
+    type=int,
+    help='tf.data prefetch buffer size; -1 uses tf.data.AUTOTUNE',
+)
+
 parser.set_defaults(powersgd=True, powersgd_error_feedback=True)
 
 
@@ -195,6 +203,8 @@ def main():
         raise ValueError('"world_size" argument is required')
     if args.addr == None:
         raise ValueError('"master_addr" argument is required')
+    if args.prefetch_buffer_size != -1 and args.prefetch_buffer_size < 1:
+        raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
     if args.powersgd_rank < 1:
         raise ValueError('"powersgd_rank" must be greater than or equal to 1')
     if args.powersgd_start_iter < 0:

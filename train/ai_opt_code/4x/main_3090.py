@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser(
         'If the user wants to adjust low-level control options, modify the code. '
         'Required settings [--rank, --world-size, --num-small, --server-addr, --dataset, --dir-path, --time-ratio] '
         'or [-r, -w, -s, -a, -d, -p, -t], '
-        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --sync-multiplier].'
+        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --sync-multiplier, --prefetch-buffer-size].'
     ),
     formatter_class=CustomFormatter,
 )
@@ -132,6 +132,14 @@ parser.add_argument(
     help='number of synchronization rounds per original mini-epoch, default is "4"',
 )
 
+parser.add_argument(
+    '--prefetch-buffer-size',
+    dest='prefetch_buffer_size',
+    default=-1,
+    type=int,
+    help='tf.data prefetch buffer size; -1 uses tf.data.AUTOTUNE',
+)
+
 
 # running server && worker
 def run_server(args):
@@ -165,6 +173,8 @@ def main():
         raise ValueError('"world_size" argument is required')
     if args.addr == None:
         raise ValueError('"master_addr" argument is required')
+    if args.prefetch_buffer_size != -1 and args.prefetch_buffer_size < 1:
+        raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
     if args.sync_multiplier < 1:
         raise ValueError('"sync_multiplier" must be greater than or equal to 1')
     print('----')

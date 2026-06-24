@@ -110,6 +110,7 @@ def make_args(**overrides):
         "powersgd_min_compression_size": 4,
         "powersgd_error_feedback": True,
         "powersgd_seed": 48763,
+        "prefetch_buffer_size": -1,
     }
     args.update(overrides)
     return SimpleNamespace(**args)
@@ -131,6 +132,7 @@ class PowerSGDRpcTest(unittest.TestCase):
             "--powersgd-min-compression-size", "16",
             "--no-powersgd-error-feedback",
             "--powersgd-seed", "7",
+            "--prefetch-buffer-size", "2",
         ])
         disabled_args = module.parser.parse_args([
             "-r", "0", "-w", "5", "-a", "127.0.0.1",
@@ -143,12 +145,14 @@ class PowerSGDRpcTest(unittest.TestCase):
         self.assertEqual(default_args.powersgd_start_iter, 2)
         self.assertEqual(default_args.powersgd_min_compression_size, 4096)
         self.assertTrue(default_args.powersgd_error_feedback)
+        self.assertEqual(default_args.prefetch_buffer_size, -1)
         self.assertFalse(disabled_args.powersgd)
         self.assertEqual(custom_args.powersgd_rank, 2)
         self.assertEqual(custom_args.powersgd_start_iter, 3)
         self.assertEqual(custom_args.powersgd_min_compression_size, 16)
         self.assertFalse(custom_args.powersgd_error_feedback)
         self.assertEqual(custom_args.powersgd_seed, 7)
+        self.assertEqual(custom_args.prefetch_buffer_size, 2)
 
     def test_low_rank_payload_roundtrip_preserves_shape_and_reduces_error(self):
         module = load_parameter_server_module()

@@ -15,6 +15,7 @@ MAIN_PATH = ROOT / "main_3090.py"
 FAKE_TRAIN_DATASETS = []
 FAKE_FIT_INPUTS = []
 FAKE_FIT_STEPS = []
+FAKE_LOAD_DATA_KWARGS = []
 
 
 class FakeTrainIterator:
@@ -90,6 +91,7 @@ def install_stubs():
     FAKE_TRAIN_DATASETS.clear()
     FAKE_FIT_INPUTS.clear()
     FAKE_FIT_STEPS.clear()
+    FAKE_LOAD_DATA_KWARGS.clear()
 
     keras_mod = types.ModuleType("tensorflow.keras")
     keras_mod.callbacks = SimpleNamespace(Callback=object)
@@ -113,6 +115,7 @@ def install_stubs():
     def fake_load_data(**_kwargs):
         train_dataset = FakeTrainDataset()
         FAKE_TRAIN_DATASETS.append(train_dataset)
+        FAKE_LOAD_DATA_KWARGS.append(_kwargs)
         return {"train": train_dataset, "val": object()}
 
     tf_data_model_mod.load_data = fake_load_data
@@ -164,6 +167,7 @@ def make_args(**overrides):
         "temp": False,
         "save": False,
         "sync_multiplier": 4,
+        "prefetch_buffer_size": -1,
     }
     args.update(overrides)
     return SimpleNamespace(**args)
@@ -204,6 +208,7 @@ class FourXScheduleTest(unittest.TestCase):
         )
         self.assertEqual(server.validation_iter_milestones.tolist(), [60 * 4, 90 * 4, 105 * 4])
         self.assertEqual(server.parameter["sync_frequency_multiplier"], 4)
+        self.assertEqual(server.parameter["prefetch_buffer_size"], -1)
         self.assertIn("_f4", server.outfile)
 
     def test_server_accepts_non_default_sync_multiplier(self):
@@ -235,10 +240,17 @@ class FourXScheduleTest(unittest.TestCase):
             "-d", "imagenet", "-p", "/data", "-t", "1.05", "--amp",
             "-f", "2",
         ])
+        prefetch_args = module.parser.parse_args([
+            "-r", "0", "-w", "5", "-a", "127.0.0.1",
+            "-d", "imagenet", "-p", "/data", "-t", "1.05", "--amp",
+            "--prefetch-buffer-size", "2",
+        ])
 
         self.assertEqual(default_args.sync_multiplier, 4)
+        self.assertEqual(default_args.prefetch_buffer_size, -1)
         self.assertEqual(custom_args.sync_multiplier, 3)
         self.assertEqual(alias_args.sync_multiplier, 2)
+        self.assertEqual(prefetch_args.prefetch_buffer_size, 2)
 
     def test_validation_helpers_fire_once_per_four_internal_syncs(self):
         module = load_parameter_server_module()
@@ -259,11 +271,11 @@ class FourXScheduleTest(unittest.TestCase):
     def test_steps_for_sync_preserves_original_local_step_count(self):
         module = load_parameter_server_module()
 
-        original_steps = round(320292 / 2330)
+        original_steps = round(320292 / 2130)
         split_steps = [
             module.steps_for_sync(
                 data_amount=320292,
-                batch_size=2330,
+                batch_size=2130,
                 sync_frequency_multiplier=4,
                 local_commit_ID=local_commit_ID,
             )
@@ -299,6 +311,7 @@ class FourXScheduleTest(unittest.TestCase):
             "momentum": 0.9,
             "weight_decay": 1e-4,
             "sync_frequency_multiplier": 4,
+            "prefetch_buffer_size": 2,
             "large_data_amount": 8,
             "small_data_amount": 4,
         }
@@ -323,6 +336,7 @@ class FourXScheduleTest(unittest.TestCase):
         self.assertEqual(calls["history"], 1)
         self.assertEqual(FAKE_FIT_STEPS, [1, 1, 1, 1])
         self.assertEqual(len(FAKE_TRAIN_DATASETS), 1)
+        self.assertEqual(FAKE_LOAD_DATA_KWARGS[0]["prefetch_buffer_size"], 2)
         self.assertEqual(FAKE_TRAIN_DATASETS[0].iter_calls, 1)
         self.assertEqual(FAKE_TRAIN_DATASETS[0].take_calls, 0)
         self.assertEqual(FAKE_TRAIN_DATASETS[0].iterator.steps_consumed, 4)

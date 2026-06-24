@@ -26,6 +26,10 @@ python main_3090.py -r=1 -w=5 -s=2 -a=${SERVER_IP} -d=imagenet -p=/data -t=1.05 
 - Validation and history logging run only once per original mini-epoch, not once per internal sync.
 - Output filenames include `_fN`, where `N` is the sync multiplier.
 
+## Prefetch Buffer
+
+All workers accept `--prefetch-buffer-size N` to control `tf.data` prefetching. The default is `-1`, which keeps TensorFlow's original `tf.data.AUTOTUNE` behavior. Use a positive integer, for example `--prefetch-buffer-size=1` or `2`, when large ImageNet batches create CPU RAM pressure.
+
 ## Changing the Sync Multiplier
 
 Use the same multiplier on every server and worker process:

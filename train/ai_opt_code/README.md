@@ -38,6 +38,7 @@ The training process requires one Parameter Server (Rank 0) and one or more Work
 - `-t`, `--ratio`: Permitted additional training time ratio (e.g., 1.05 for 5% extra time). This parameter influences the balancing of dual batch sizes.
 - `--amp`: Enable Mixed Precision training (Highly recommended for RTX 3090).
 - `--xla`: Enable JIT compilation with XLA.
+- `--prefetch-buffer-size N`: Set `tf.data` prefetch buffer size. Default `-1` keeps `tf.data.AUTOTUNE`; use a positive integer such as `1` or `2` to cap RAM pressure.
 
 ### Execution Examples
 

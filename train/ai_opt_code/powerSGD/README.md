@@ -48,6 +48,7 @@ Useful options:
 - `--powersgd-min-compression-size N`: only compress tensors with at least `N` elements. Default: `4096`.
 - `--no-powersgd-error-feedback`: disable worker-side residual error feedback.
 - `--powersgd-seed N`: deterministic sketch seed. Default: `48763`.
+- `--prefetch-buffer-size N`: set `tf.data` prefetch buffer size. Default: `-1`, which keeps `tf.data.AUTOTUNE`; use a positive integer to cap RAM pressure.
 
 Output filenames include `_psgdR<N>` when compression is enabled, or `_noPowerSGD` when disabled.
 
