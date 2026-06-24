@@ -1,3 +1,4 @@
+import gc
 import itertools
 import os
 import shutil
@@ -255,6 +256,11 @@ class Worker(object):
             def on_epoch_end(self, epoch, logs=None): self.history.append(time.perf_counter() - self.time_epoch_begin)
         self.time_callback = TimeCallback()
 
+    def _reset_input_pipeline(self):
+        self.train_iterator = None
+        self.dataloader = None
+        gc.collect()
+
     def train(self):
         # Initial sync to get parameters and global weights
         global_weights, self.parameter, _, self.mission_complete = rpc.rpc_sync(
@@ -273,6 +279,7 @@ class Worker(object):
             if self.step_ID != self.parameter['global_step_ID'] or self.stage_ID != self.parameter['global_stage_ID']:
                 self.step_ID = self.parameter['global_step_ID']
                 self.stage_ID = self.parameter['global_stage_ID']
+                self._reset_input_pipeline()
                 
                 # Update dataloader with sharding
                 self.dataloader = tf_data_model.load_data(
@@ -335,6 +342,8 @@ class Worker(object):
             self.pending_train_acc += train_logs.history['accuracy'][0]
             self.pending_train_time += self.time_callback.history[-1]
             self.pending_train_count += 1
+            del train_logs
+            gc.collect()
             
             # Combined Push weights & Pull new weights/parameters
             global_weights, self.parameter, global_commit_ID, self.mission_complete = rpc.rpc_sync(
@@ -352,6 +361,9 @@ class Worker(object):
             if should_validate_commit(global_commit_ID, validation_interval):
                 # Evaluate and record once per original mini-epoch.
                 val_logs = self.model.evaluate(self.dataloader['val'], verbose=self.verbose, return_dict=True)
+                val_loss = val_logs['loss']
+                val_acc = val_logs['accuracy']
+                del val_logs
                 train_count = max(1, self.pending_train_count)
                 record = {
                     'worker_ID': self.rank,
@@ -362,11 +374,13 @@ class Worker(object):
                     'train_loss': self.pending_train_loss / train_count,
                     'train_acc': self.pending_train_acc / train_count,
                     'train_time': self.pending_train_time,
-                    'val_loss': val_logs['loss'],
-                    'val_acc': val_logs['accuracy'],
+                    'val_loss': val_loss,
+                    'val_acc': val_acc,
                     'commit_time': None,
                 }
                 rpc.rpc_sync(self.ps_rref.owner(), Server.update_history, kwargs={'ps_rref': self.ps_rref, 'record': record})
+                del record
+                gc.collect()
                 self.pending_train_loss = 0.0
                 self.pending_train_acc = 0.0
                 self.pending_train_time = 0.0
