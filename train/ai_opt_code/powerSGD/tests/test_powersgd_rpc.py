@@ -104,6 +104,7 @@ def make_args(**overrides):
         "comments": None,
         "temp": False,
         "save": False,
+        "trace_dir": None,
         "powersgd": True,
         "powersgd_rank": 1,
         "powersgd_start_iter": 0,
@@ -133,6 +134,7 @@ class PowerSGDRpcTest(unittest.TestCase):
             "--no-powersgd-error-feedback",
             "--powersgd-seed", "7",
             "--prefetch-buffer-size", "2",
+            "--trace-dir", "/tmp/powersgd-traces",
         ])
         disabled_args = module.parser.parse_args([
             "-r", "0", "-w", "5", "-a", "127.0.0.1",
@@ -153,6 +155,19 @@ class PowerSGDRpcTest(unittest.TestCase):
         self.assertFalse(custom_args.powersgd_error_feedback)
         self.assertEqual(custom_args.powersgd_seed, 7)
         self.assertEqual(custom_args.prefetch_buffer_size, 2)
+        self.assertEqual(custom_args.trace_dir, "/tmp/powersgd-traces")
+
+    def test_server_defaults_trace_dir_to_method_directory_and_honors_override(self):
+        module = load_parameter_server_module()
+
+        default_server = module.Server(make_args())
+        custom_server = module.Server(make_args(trace_dir="/tmp/custom-powersgd-traces"))
+
+        self.assertEqual(Path(default_server.trace_dir), ROOT / "traces")
+        self.assertEqual(Path(default_server.outfile).parent, ROOT / "traces")
+        self.assertEqual(Path(default_server.tempfile).parent, ROOT / "traces")
+        self.assertEqual(Path(custom_server.trace_dir), Path("/tmp/custom-powersgd-traces"))
+        self.assertEqual(Path(custom_server.outfile).parent, Path("/tmp/custom-powersgd-traces"))
 
     def test_low_rank_payload_roundtrip_preserves_shape_and_reduces_error(self):
         module = load_parameter_server_module()

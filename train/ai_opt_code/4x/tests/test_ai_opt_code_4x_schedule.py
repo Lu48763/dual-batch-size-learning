@@ -166,6 +166,7 @@ def make_args(**overrides):
         "comments": None,
         "temp": False,
         "save": False,
+        "trace_dir": None,
         "sync_multiplier": 4,
         "prefetch_buffer_size": -1,
     }
@@ -245,12 +246,37 @@ class FourXScheduleTest(unittest.TestCase):
             "-d", "imagenet", "-p", "/data", "-t", "1.05", "--amp",
             "--prefetch-buffer-size", "2",
         ])
+        trace_args = module.parser.parse_args([
+            "-r", "0", "-w", "5", "-a", "127.0.0.1",
+            "-d", "imagenet", "-p", "/data", "-t", "1.05", "--amp",
+            "--trace-dir", "/tmp/ai-opt-traces",
+        ])
+        output_alias_args = module.parser.parse_args([
+            "-r", "0", "-w", "5", "-a", "127.0.0.1",
+            "-d", "imagenet", "-p", "/data", "-t", "1.05", "--amp",
+            "--output-dir", "/tmp/ai-opt-output",
+        ])
 
         self.assertEqual(default_args.sync_multiplier, 4)
         self.assertEqual(default_args.prefetch_buffer_size, -1)
+        self.assertIsNone(default_args.trace_dir)
         self.assertEqual(custom_args.sync_multiplier, 3)
         self.assertEqual(alias_args.sync_multiplier, 2)
         self.assertEqual(prefetch_args.prefetch_buffer_size, 2)
+        self.assertEqual(trace_args.trace_dir, "/tmp/ai-opt-traces")
+        self.assertEqual(output_alias_args.trace_dir, "/tmp/ai-opt-output")
+
+    def test_server_defaults_trace_dir_to_method_directory_and_honors_override(self):
+        module = load_parameter_server_module()
+
+        default_server = module.Server(make_args())
+        custom_server = module.Server(make_args(trace_dir="/tmp/custom-traces"))
+
+        self.assertEqual(Path(default_server.trace_dir), ROOT / "traces")
+        self.assertEqual(Path(default_server.outfile).parent, ROOT / "traces")
+        self.assertEqual(Path(default_server.tempfile).parent, ROOT / "traces")
+        self.assertEqual(Path(custom_server.trace_dir), Path("/tmp/custom-traces"))
+        self.assertEqual(Path(custom_server.outfile).parent, Path("/tmp/custom-traces"))
 
     def test_validation_helpers_fire_once_per_four_internal_syncs(self):
         module = load_parameter_server_module()

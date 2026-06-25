@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser(
         'If the user wants to adjust low-level control options, modify the code. '
         'Required settings [--rank, --world-size, --num-small, --server-addr, --dataset, --dir-path, --time-ratio] '
         'or [-r, -w, -s, -a, -d, -p, -t], '
-        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --prefetch-buffer-size].'
+        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save, --trace-dir, --prefetch-buffer-size].'
     ),
     formatter_class=CustomFormatter,
 )
@@ -123,6 +123,13 @@ parser.add_argument(
     action='store_false',
     help='do not save the training results, including "_model" and ".npy"',
 )
+parser.add_argument(
+    '--trace-dir', '--output-dir',
+    dest='trace_dir',
+    type=str,
+    default=None,
+    help='directory for saved training traces/models; default is the method directory under "traces"',
+)
 
 parser.add_argument(
     '--prefetch-buffer-size',
@@ -167,6 +174,8 @@ def main():
         raise ValueError('"master_addr" argument is required')
     if args.prefetch_buffer_size != -1 and args.prefetch_buffer_size < 1:
         raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
+    if args.trace_dir is not None:
+        args.trace_dir = os.path.abspath(os.path.expanduser(args.trace_dir))
     print('----')
     print(args)
     print('----')

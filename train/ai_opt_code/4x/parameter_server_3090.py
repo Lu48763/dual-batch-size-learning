@@ -12,6 +12,15 @@ from torch.distributed import rpc
 import tf_data_model
 
 
+def get_default_trace_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'traces')
+
+
+def resolve_trace_dir(args):
+    trace_dir = getattr(args, 'trace_dir', None) or get_default_trace_dir()
+    return os.path.abspath(os.path.expanduser(trace_dir))
+
+
 DEFAULT_SYNC_FREQUENCY_MULTIPLIER = 4
 
 
@@ -48,6 +57,7 @@ class Server(object):
         self.mission_complete = False
         self.parameter_lock = threading.Lock()
         self.global_model_lock = threading.Lock()
+        self.trace_dir = resolve_trace_dir(args)
         self.prefetch_buffer_size = getattr(args, 'prefetch_buffer_size', -1)
         if self.prefetch_buffer_size != -1 and self.prefetch_buffer_size < 1:
             raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
@@ -110,7 +120,7 @@ class Server(object):
             'train_time': [], 'val_loss': [], 'val_acc': [], 'commit_time': [],
         }
         
-        self.outfile = (
+        filename = (
             f'{args.dataset}_resnet{args.depth}_e{self.epochs}'
             f'_t{("%.2f" % args.time_ratio).replace(".", "")}'
             f'_w{args.world_size}s{args.small}'
@@ -119,7 +129,8 @@ class Server(object):
             f'{"" if args.cycle else "_noCycle"}'
             f'{"_" + args.comments if args.comments else ""}'
         )
-        self.tempfile = f'temp_{self.outfile}'
+        self.outfile = os.path.join(self.trace_dir, filename)
+        self.tempfile = os.path.join(self.trace_dir, f'temp_{filename}')
 
     def _update_parameter_dict(self):
         return {
@@ -210,7 +221,11 @@ class Server(object):
         if self.args.temp and (record['global_commit_ID'] + 1) in self.validation_iter_milestones:
             self.save_tempfile(record['global_commit_ID'])
 
+    def _ensure_trace_dir(self):
+        os.makedirs(self.trace_dir, exist_ok=True)
+
     def save_tempfile(self, temp_commit_ID):
+        self._ensure_trace_dir()
         with self.global_model_lock:
             self.global_model.save(f'{self.tempfile}_model')
             np.save(f'{self.tempfile}.npy', self.history)
@@ -218,6 +233,7 @@ class Server(object):
 
     def save_outfile(self):
         if self.args.save:
+            self._ensure_trace_dir()
             self.global_model.save(f'{self.outfile}_model')
             np.save(f'{self.outfile}.npy', self.history)
             print(f'Saved Model: {self.outfile}_model\nSaved Logs: {self.outfile}.npy')

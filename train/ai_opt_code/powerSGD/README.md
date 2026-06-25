@@ -49,8 +49,9 @@ Useful options:
 - `--no-powersgd-error-feedback`: disable worker-side residual error feedback.
 - `--powersgd-seed N`: deterministic sketch seed. Default: `48763`.
 - `--prefetch-buffer-size N`: set `tf.data` prefetch buffer size. Default: `-1`, which keeps `tf.data.AUTOTUNE`; use a positive integer to cap RAM pressure.
+- `--trace-dir PATH`, `--output-dir PATH`: redirect saved `.npy` history traces and Keras model files.
 
-Output filenames include `_psgdR<N>` when compression is enabled, or `_noPowerSGD` when disabled.
+Outputs default to `train/ai_opt_code/powerSGD/traces/`, independent of the current working directory. Filenames include `_psgdR<N>` when compression is enabled, or `_noPowerSGD` when disabled.
 
 ## Tests
 

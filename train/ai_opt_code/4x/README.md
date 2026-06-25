@@ -30,6 +30,10 @@ python main_3090.py -r=1 -w=5 -s=2 -a=${SERVER_IP} -d=imagenet -p=/data -t=1.05 
 
 All workers accept `--prefetch-buffer-size N` to control `tf.data` prefetching. The default is `-1`, which keeps TensorFlow's original `tf.data.AUTOTUNE` behavior. Use a positive integer, for example `--prefetch-buffer-size=1` or `2`, when large ImageNet batches create CPU RAM pressure.
 
+## Trace Output
+
+Saved `.npy` history traces and Keras model files default to `train/ai_opt_code/4x/traces/`, so outputs stay with this method even when the script is launched from another working directory. Override the location with `--trace-dir PATH` or `--output-dir PATH`.
+
 ## Changing the Sync Multiplier
 
 Use the same multiplier on every server and worker process:
