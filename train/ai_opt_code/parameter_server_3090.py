@@ -1,4 +1,3 @@
-import gc
 import itertools
 import os
 import shutil
@@ -11,15 +10,6 @@ from torch.distributed import rpc
 
 import tf_data_model
 
-
-def get_default_trace_dir():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'traces')
-
-
-def resolve_trace_dir(args):
-    trace_dir = getattr(args, 'trace_dir', None) or get_default_trace_dir()
-    return os.path.abspath(os.path.expanduser(trace_dir))
-
 # Server
 class Server(object):
     def __init__(self, args):
@@ -31,10 +21,6 @@ class Server(object):
         self.mission_complete = False
         self.parameter_lock = threading.Lock()
         self.global_model_lock = threading.Lock()
-        self.trace_dir = resolve_trace_dir(args)
-        self.prefetch_buffer_size = getattr(args, 'prefetch_buffer_size', -1)
-        if self.prefetch_buffer_size != -1 and self.prefetch_buffer_size < 1:
-            raise ValueError('"prefetch_buffer_size" must be -1 or greater than or equal to 1')
         
         self.epochs = 105
         self.steps = 3
@@ -51,7 +37,7 @@ class Server(object):
                 [0.00025895413494090355, 0.00045862692849402506, 0.0007576280737663753] if args.xla
                 else [0.0003013537830804257, 0.0005683767808602767, 0.0009387165655225843]
             )
-            self.large_batch_size_ls = [2800, 1400, 900] if args.xla else [2130, 960, 640]
+            self.large_batch_size_ls = [2800, 1400, 900] if args.xla else [2330, 1110, 740]
         else:
             raise ValueError('The ImageNet training process only supports "--amp"')
             
@@ -88,7 +74,7 @@ class Server(object):
             'train_time': [], 'val_loss': [], 'val_acc': [], 'commit_time': [],
         }
         
-        filename = (
+        self.outfile = (
             f'{args.dataset}_resnet{args.depth}_e{self.epochs}'
             f'_t{("%.2f" % args.time_ratio).replace(".", "")}'
             f'_w{args.world_size}s{args.small}'
@@ -96,8 +82,7 @@ class Server(object):
             f'{"" if args.cycle else "_noCycle"}'
             f'{"_" + args.comments if args.comments else ""}'
         )
-        self.outfile = os.path.join(self.trace_dir, filename)
-        self.tempfile = os.path.join(self.trace_dir, f'temp_{filename}')
+        self.tempfile = f'temp_{self.outfile}'
 
     def _update_parameter_dict(self):
         return {
@@ -110,7 +95,6 @@ class Server(object):
             'dropout_rate': self.dropout_rate_ls[self.stage_idx % len(self.dropout_rate_ls)],
             'momentum': 0.9,
             'weight_decay': 1e-4,
-            'prefetch_buffer_size': self.prefetch_buffer_size,
             'large_data_amount': self.large_data_amount,
             'small_data_amount': self.small_data_amount,
         }
@@ -187,11 +171,7 @@ class Server(object):
         if self.args.temp and (record['global_commit_ID'] + 1) in self.iter_milestones:
             self.save_tempfile(record['global_commit_ID'])
 
-    def _ensure_trace_dir(self):
-        os.makedirs(self.trace_dir, exist_ok=True)
-
     def save_tempfile(self, temp_commit_ID):
-        self._ensure_trace_dir()
         with self.global_model_lock:
             self.global_model.save(f'{self.tempfile}_model')
             np.save(f'{self.tempfile}.npy', self.history)
@@ -199,7 +179,6 @@ class Server(object):
 
     def save_outfile(self):
         if self.args.save:
-            self._ensure_trace_dir()
             self.global_model.save(f'{self.outfile}_model')
             np.save(f'{self.outfile}.npy', self.history)
             print(f'Saved Model: {self.outfile}_model\nSaved Logs: {self.outfile}.npy')
@@ -224,7 +203,6 @@ class Worker(object):
         
         self.parameter = None
         self.dataloader = None
-        self.train_iterator = None
         self.model = None
         self.verbose = 2
         
@@ -233,11 +211,6 @@ class Worker(object):
             def on_epoch_begin(self, epoch, logs=None): self.time_epoch_begin = time.perf_counter()
             def on_epoch_end(self, epoch, logs=None): self.history.append(time.perf_counter() - self.time_epoch_begin)
         self.time_callback = TimeCallback()
-
-    def _reset_input_pipeline(self):
-        self.train_iterator = None
-        self.dataloader = None
-        gc.collect()
 
     def train(self):
         # Initial sync to get parameters and global weights
@@ -257,7 +230,6 @@ class Worker(object):
             if self.step_ID != self.parameter['global_step_ID'] or self.stage_ID != self.parameter['global_stage_ID']:
                 self.step_ID = self.parameter['global_step_ID']
                 self.stage_ID = self.parameter['global_stage_ID']
-                self._reset_input_pipeline()
                 
                 # Update dataloader with sharding
                 self.dataloader = tf_data_model.load_data(
@@ -267,10 +239,8 @@ class Worker(object):
                     dir_path=self.args.dir_path,
                     val_batch_size=self.parameter['large_batch_size'],
                     num_shards=self.args.world_size - 1,
-                    shard_rank=self.rank - 1,
-                    prefetch_buffer_size=self.parameter['prefetch_buffer_size']
+                    shard_rank=self.rank - 1
                 )
-                self.train_iterator = iter(self.dataloader['train'])
                 
                 # Update model structure and transfer weights
                 self.model = tf_data_model.modify_resnet(
@@ -306,16 +276,10 @@ class Worker(object):
             )
             
             train_logs = self.model.fit(
-                self.train_iterator,
-                steps_per_epoch=steps_per_epoch,
+                self.dataloader['train'].take(steps_per_epoch),
                 verbose=self.verbose,
                 callbacks=[self.time_callback],
             )
-            train_loss = train_logs.history['loss'][0]
-            train_acc = train_logs.history['accuracy'][0]
-            train_time = self.time_callback.history[-1]
-            del train_logs
-            gc.collect()
             
             # Combined Push weights & Pull new weights/parameters
             global_weights, self.parameter, global_commit_ID, self.mission_complete = rpc.rpc_sync(
@@ -331,21 +295,16 @@ class Worker(object):
             
             # Evaluate after sync
             val_logs = self.model.evaluate(self.dataloader['val'], verbose=self.verbose, return_dict=True)
-            val_loss = val_logs['loss']
-            val_acc = val_logs['accuracy']
-            del val_logs
             
             # Update history on server
             record = {
                 'worker_ID': self.rank, 'global_commit_ID': global_commit_ID,
                 'local_commit_ID': self.local_commit_ID, 'step_ID': self.step_ID,
-                'stage_ID': self.stage_ID, 'train_loss': train_loss,
-                'train_acc': train_acc, 'train_time': train_time,
-                'val_loss': val_loss, 'val_acc': val_acc, 'commit_time': None,
+                'stage_ID': self.stage_ID, 'train_loss': train_logs.history['loss'][0],
+                'train_acc': train_logs.history['accuracy'][0], 'train_time': self.time_callback.history[-1],
+                'val_loss': val_logs['loss'], 'val_acc': val_logs['accuracy'], 'commit_time': None,
             }
             rpc.rpc_sync(self.ps_rref.owner(), Server.update_history, kwargs={'ps_rref': self.ps_rref, 'record': record})
-            del record
-            gc.collect()
             
             print(f'Worker {self.rank} Local Commit {self.local_commit_ID} Complete')
             self.local_commit_ID += 1

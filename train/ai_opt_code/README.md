@@ -38,12 +38,6 @@ The training process requires one Parameter Server (Rank 0) and one or more Work
 - `-t`, `--ratio`: Permitted additional training time ratio (e.g., 1.05 for 5% extra time). This parameter influences the balancing of dual batch sizes.
 - `--amp`: Enable Mixed Precision training (Highly recommended for RTX 3090).
 - `--xla`: Enable JIT compilation with XLA.
-- `--prefetch-buffer-size N`: Set `tf.data` prefetch buffer size. Default `-1` keeps `tf.data.AUTOTUNE`; use a positive integer such as `1` or `2` to cap RAM pressure.
-- `--trace-dir PATH`, `--output-dir PATH`: Directory for saved `.npy` history traces and Keras model files.
-
-### Trace Output
-
-By default, outputs are written under `train/ai_opt_code/traces/`, independent of the directory from which `main_3090.py` is launched. Use `--trace-dir` to redirect traces after moving files or when collecting runs in a shared experiment directory.
 
 ### Execution Examples
 
