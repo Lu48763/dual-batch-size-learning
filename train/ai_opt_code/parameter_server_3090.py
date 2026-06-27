@@ -43,6 +43,7 @@ class Server(object):
             
         self.resolution_ls = [160, 224, 288]
         self.dropout_rate_ls = [0.1, 0.2, 0.3]
+        self.no_cycle_stage_idx = len(self.resolution_ls) - 1
         
         # Calculate data amounts and small batch sizes
         self.large_data_amount, self.small_data_amount, self.small_batch_size_ls = self.get_large_small_dataAmount_batchSize()
@@ -53,7 +54,7 @@ class Server(object):
         
         # Parameter state
         self.step_idx = 0
-        self.stage_idx = 0
+        self.stage_idx = 0 if args.cycle else self.no_cycle_stage_idx
         self.learning_rates = [2e-1 * 0.1 ** i for i in range(self.steps + 1)]
         
         self.parameter = self._update_parameter_dict()
@@ -143,7 +144,7 @@ class Server(object):
                         # Update parameters based on milestones
                         if self.global_commit_ID in self.iter_milestones:
                             self.step_idx += 1
-                        if self.global_commit_ID in self.cycle_milestones:
+                        if self.args.cycle and self.global_commit_ID in self.cycle_milestones:
                             self.stage_idx += 1
                         
                         self.parameter = self._update_parameter_dict()

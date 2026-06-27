@@ -18,9 +18,9 @@ parser = argparse.ArgumentParser(
     epilog=(
         'The parser only supports high-level control options. '
         'If the user wants to adjust low-level control options, modify the code. '
-        'Required settings [--rank, --world-size, --num-small, --server-addr, --dataset, --dir-path, --time-ratio] '
-        'or [-r, -w, -s, -a, -d, -p, -t], '
-        'optional settings [--amp, --xla, --depth, --server-port, --no-cycle, --temp, --no-save].'
+        'Required settings [--rank, --world-size, --server-addr] or [-r, -w, -a]. '
+        'Rank 0 also requires [--dataset, --dir-path, --amp] or [-d, -p, --amp]. '
+        'Optional settings [--num-small, --time-ratio, --xla, --depth, --server-port, --no-cycle, --temp, --no-save].'
     ),
     formatter_class=CustomFormatter,
 )
@@ -65,7 +65,8 @@ parser.add_argument(
 parser.add_argument(
     '--dataset', '--data', '-d',
     type=str,
-    help='dataset to train, currently supports ["cifar10", "cifar100", "imagenet"]',
+    choices=['imagenet'],
+    help='dataset to train; the current RTX 3090 training flow supports only "imagenet"',
 )
 parser.add_argument(
     '--dir-path', '--path', '-p',
@@ -76,7 +77,8 @@ parser.add_argument(
     '--depth',
     type=int,
     default=18,
-    help='resnet depth, currently supports [18, 34] , should modify intercept_ and coef_ in "parameter_server.py" if the value is not "18"',
+    choices=[18],
+    help='resnet depth; current timing coefficients support ResNet-18 only',
 )
 ## experimant: intercept, coefficient, and permitted additional training time
 parser.add_argument(
@@ -147,16 +149,35 @@ def run_worker(ps_rref, args, rank, is_small_batch):
     print(f'Worker {rank} Training Complete')
 
 
-# main
-def main():
-    # parse args
-    args = parser.parse_args()
+def validate_args(args):
     if args.rank == None:
         raise ValueError('"rank" argument is required')
     if args.world_size == None:
         raise ValueError('"world_size" argument is required')
     if args.addr == None:
         raise ValueError('"master_addr" argument is required')
+    if args.world_size < 2:
+        raise ValueError('"world_size" must be greater than or equal to 2')
+    if args.rank < 0 or args.rank >= args.world_size:
+        raise ValueError('"rank" must be between 0 and world_size - 1')
+    if args.small < 0 or args.small > args.world_size - 1:
+        raise ValueError('"small" must be between 0 and world_size - 1')
+    if args.time_ratio <= 0:
+        raise ValueError('"time_ratio" must be greater than 0')
+    if args.rank == 0:
+        if args.dataset == None:
+            raise ValueError('"dataset" argument is required on rank 0')
+        if args.dir_path == None:
+            raise ValueError('"dir_path" argument is required on rank 0')
+        if not args.amp:
+            raise ValueError('"amp" is required for ImageNet training')
+
+
+# main
+def main():
+    # parse args
+    args = parser.parse_args()
+    validate_args(args)
     print('----')
     print(args)
     print('----')
