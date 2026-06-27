@@ -108,7 +108,7 @@ Optional settings:
 - `-t`, `--additional-time-ratio`, `--time-ratio`, `--ratio`: Permitted additional training time ratio. Default: `1`. Must be greater than `0`.
 - `--jit-compile`, `--xla`: Enables the existing TensorFlow JIT/XLA setup path. Actual runtime success still depends on the CUDA/XLA environment.
 - `-c`, `--comments`: Adds a suffix to saved output filenames.
-- `--no-cycle`: Disables cyclic progressive resolution changes.
+- `--no-cycle`: Disables cyclic repeats while keeping one-way progressive stage changes at learning-rate milestones.
 - `--temp`: Saves temporary model/log files at learning-rate milestones, then removes those temporary files when training completes.
 - `--no-save`: Disables final model and `.npy` history output.
 
@@ -135,13 +135,15 @@ Training length is fixed at 105 epochs in distributed mini-epoch units:
 - learning-rate decay milestones: epochs 60, 90, 105
 - cyclic stage milestones: epochs 20, 40, 60, 70, 80, 90, 95, 100, 105
 
-With `--no-cycle`, the run starts directly from the final DBL stage and stays there:
+With `--no-cycle`, the run does not repeat the progressive sub-stage cycle. It uses each progressive stage once, aligned with the learning-rate schedule:
 
-- resolution: 288
-- dropout: 0.3
-- large batch size: stage 2 value
-- learning-rate milestones are still applied at epochs 60, 90, and 105
-- total epoch count and validation frequency are unchanged
+| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1-60 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
+| 61-90 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
+| 91-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
+
+Total epoch count and validation frequency are unchanged. The 105-epoch learning-rate milestone still marks the end of training and does not wrap the no-cycle schedule back to stage 0.
 
 ## Output
 
@@ -163,7 +165,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s train/ai_opt_code/t
 python3 -B -m py_compile train/ai_opt_code/main_3090.py train/ai_opt_code/parameter_server_3090.py train/ai_opt_code/tf_data_model.py
 ```
 
-The parser tests verify default values, aliases, unsupported option rejection, and required argument validation. The no-cycle tests verify that `--no-cycle` starts at the final DBL stage while keeping learning-rate milestone behavior.
+The parser tests verify default values, aliases, unsupported option rejection, and required argument validation. The no-cycle tests verify that `--no-cycle` skips cyclic repeat milestones and advances stages only at learning-rate milestones.
 
 ## Citation
 
