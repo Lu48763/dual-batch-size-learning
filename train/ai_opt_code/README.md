@@ -1,46 +1,37 @@
-# Hybrid Dual-Batch and Cyclic Progressive Learning for ImageNet
+# ai_opt_code ImageNet Training
 
-This directory contains the current `ai_opt_code` training flow for the paper implementation. It uses TensorFlow/Keras for model training and PyTorch RPC for the distributed parameter-server control path.
+This folder contains the current ImageNet/ResNet-18 training flow for the paper implementation. It uses TensorFlow/Keras for training and PyTorch RPC for parameter-server coordination.
 
-The current command-line interface is intentionally limited to the implementation that has matching timing coefficients and schedule logic:
+Current supported scope:
 
 - Dataset: `imagenet`
-- Model: ResNet-18
+- Model: ResNet-18 only
 - Hardware profile: RTX 3090 timing model
-- Training mode: mixed precision AMP is required for ImageNet
+- Required training mode: AMP mixed precision
+- Schedules: `cyclic`, `no-cycle`, `uniform`
 
-`tf_data_model.py` still contains lower-level CIFAR and ResNet-34 helpers, but the distributed training entrypoint rejects those options because the parameter-server batch-size and timing schedule are not implemented for them.
+`tf_data_model.py` contains lower-level CIFAR and ResNet-34 helpers, but `main_3090.py` rejects those options because the distributed timing and batch-size schedule are implemented only for ImageNet/ResNet-18.
+
+## Files
+
+- `main_3090.py`: CLI parser, validation, AMP/XLA setup, GPU selection, and RPC startup.
+- `parameter_server_3090.py`: server/worker training loop, batch-size calculation, schedule milestones, logging, and output saving.
+- `tf_data_model.py`: TensorFlow data loading and ResNet construction.
+- `tests/`: regression tests for parser and schedule behavior.
+- `2509.26092v2.pdf`: referenced paper.
 
 ## Environment
 
-- Python: 3.11
-- TensorFlow: 2.13
-- PyTorch: 2.1, used for `torch.distributed.rpc`
-- CUDA: 12.1 runtime with `cuda-nvcc` 11.8 in the original environment
-
-Example conda setup:
+Original environment:
 
 ```bash
 conda create -n hdbl -c pytorch -c nvidia python=3.11 tensorflow=2.13 pytorch=2.1 pytorch-cuda=12.1 cuda-nvcc=11.8
 conda activate hdbl
 ```
 
-Optional analysis tools:
+If PyTorch RPC cannot connect to rank 0, check whether `/etc/hosts` maps `127.0.1.1` to the machine hostname.
 
-```bash
-conda install -n hdbl matplotlib scikit-learn jupyterlab typing_extensions
-```
-
-For some machines, PyTorch RPC may bind to the wrong local hostname if `/etc/hosts` maps `127.0.1.1` to the server name. Check that setting if RPC workers cannot connect to rank 0.
-
-## Files
-
-- `main_3090.py`: CLI parser, argument validation, TensorFlow AMP/XLA setup, GPU selection, and PyTorch RPC initialization.
-- `parameter_server_3090.py`: `Server` and `Worker` logic, dual-batch calculation, progressive resolution schedule, learning-rate milestones, validation logging, and output saving.
-- `tf_data_model.py`: TensorFlow data loaders and ResNet construction.
-- `tests/`: Lightweight regression tests for parser behavior and schedule behavior.
-
-## Dataset Layout
+## Dataset
 
 `--dir-path` should point to the directory that contains the `imagenet` folder:
 
@@ -49,32 +40,27 @@ ${dir_path}/imagenet/train/<class_id>/*.jpg
 ${dir_path}/imagenet/val/<class_id>/*.jpg
 ```
 
-The training dataset is sharded across workers with `Dataset.shard(num_shards=world_size - 1, shard_rank=rank - 1)`. Validation is not sharded; every worker evaluates on the full validation dataset after each local training commit.
+Training data is sharded across workers. Validation is not sharded; every worker evaluates on the full validation set after each local commit.
 
-## Usage
+## Quick Start
 
-The distributed job has one parameter server and one or more workers:
+Rank 0 is the parameter server. Rank 1 and above are workers. `--world-size` includes rank 0, so `--world-size 5` means one parameter server plus four workers.
 
-- Rank 0: parameter server.
-- Rank 1 and above: workers.
-- `--world-size` is the total process count, including rank 0.
-- The number of training workers is `world_size - 1`.
-
-Start rank 0 first:
+Set common variables:
 
 ```bash
-python main_3090.py \
-  -r 0 \
-  -w 5 \
-  -s 2 \
-  -a "$SERVER_IP" \
-  -d imagenet \
-  -p /data \
-  -t 1.05 \
-  --amp
+cd /home/r08944044/dual-batch-size-learning/train/ai_opt_code
+export SERVER_IP=192.168.0.1
+export DATA_ROOT=/data
 ```
 
-Start each worker with its own rank:
+Start rank 0 first. This is the compact command for the default `cyclic` schedule:
+
+```bash
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp
+```
+
+Start workers:
 
 ```bash
 python main_3090.py -r 1 -w 5 -a "$SERVER_IP"
@@ -83,101 +69,92 @@ python main_3090.py -r 3 -w 5 -a "$SERVER_IP"
 python main_3090.py -r 4 -w 5 -a "$SERVER_IP"
 ```
 
-Rank 0 validates and sends the training configuration to workers through RPC. Passing the same training arguments to workers is harmless, but the current validator only requires dataset/path/AMP on rank 0.
+If rank 0 uses a non-default `--server-port`, pass the same port to every worker.
 
-## Parser Options
+## Schedule Commands
 
-Required distributed settings:
+Use one of these on rank 0:
 
-- `-r`, `--rank`: Global rank. Use `0` for the parameter server and `1..world_size-1` for workers.
-- `-w`, `--world-size`: Total number of RPC processes. Must be at least `2`.
-- `-a`, `--server-addr`, `--addr`: Rank 0 address used by RPC.
+```bash
+# Default paper hybrid cyclic schedule
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp
+
+# Same as default, explicit form
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp --schedule cyclic
+
+# Non-cyclic schedule using original LR-stage boundaries
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp --schedule no-cycle
+
+# Non-cyclic schedule split into three equal 35-epoch stages
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp --schedule uniform
+
+# Legacy alias for --schedule no-cycle
+python main_3090.py -r 0 -w 5 -s 2 -a "$SERVER_IP" -d imagenet -p "$DATA_ROOT" -t 1.05 --amp --no-cycle
+```
+
+Do not combine `--schedule ...` with `--no-cycle`; argparse rejects that combination.
+
+## Arguments
+
+Required RPC settings:
+
+| Flag | Default | Required on | Meaning |
+| --- | --- | --- | --- |
+| `--rank`, `-r` | `None` | all ranks | Global rank. Use `0` for parameter server and `1..world_size-1` for workers. |
+| `--world-size`, `-w` | `None` | all ranks | Total RPC process count. Must be at least `2`. |
+| `--server-addr`, `--addr`, `-a` | `None` | all ranks | Rank 0 address for PyTorch RPC. |
 
 Rank 0 training settings:
 
-- `-d`, `--dataset`, `--data`: Dataset. Only `imagenet` is accepted.
-- `-p`, `--dir-path`, `--path`: Dataset root path.
-- `--mixed-precision`, `--amp`: Required for the current ImageNet training path.
+| Flag | Default | Required on | Meaning |
+| --- | --- | --- | --- |
+| `--dataset`, `--data`, `-d` | `None` | rank 0 | Dataset. Only `imagenet` is accepted. |
+| `--dir-path`, `--path`, `-p` | `None` | rank 0 | Dataset root containing `imagenet/train` and `imagenet/val`. |
+| `--mixed-precision`, `--amp` | `False` | rank 0 | Required for the current ImageNet path. |
 
 Optional settings:
 
-- `-s`, `--num-small`, `--small`: Number of workers assigned to the small-batch group. Default: `0`. Must be between `0` and `world_size - 1`.
-- `--server-port`, `--port`: RPC port. Default: `48763`.
-- `--device-index`: Index into TensorFlow's visible GPU list. Default: `0`.
-- `--depth`: ResNet depth. Only `18` is accepted by the current parser.
-- `-t`, `--additional-time-ratio`, `--time-ratio`, `--ratio`: Permitted additional training time ratio. Default: `1`. Must be greater than `0`.
-- `--jit-compile`, `--xla`: Enables the existing TensorFlow JIT/XLA setup path. Actual runtime success still depends on the CUDA/XLA environment.
-- `--schedule {cyclic,no-cycle,uniform}`: Training schedule. Default: `cyclic`.
-  - `cyclic`: Paper hybrid cyclic progressive learning schedule.
-  - `no-cycle`: Non-cyclic progressive schedule aligned with the original learning-rate milestones.
-  - `uniform`: Non-cyclic progressive schedule split into three equal 35-epoch stages.
-- `--no-cycle`: Legacy alias for `--schedule no-cycle`. It cannot be combined with `--schedule`.
-- `-c`, `--comments`: Adds a suffix to saved output filenames.
-- `--temp`: Saves temporary model/log files at learning-rate milestones, then removes those temporary files when training completes.
-- `--no-save`: Disables final model and `.npy` history output.
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--num-small`, `--small`, `-s` | `0` | Number of small-batch workers. Must be between `0` and `world_size - 1`. |
+| `--server-port`, `--port` | `'48763'` | RPC port. Use the same value on all ranks. |
+| `--device-index` | `0` | TensorFlow visible GPU index. |
+| `--depth` | `18` | ResNet depth. Only `18` is accepted. |
+| `--additional-time-ratio`, `--time-ratio`, `--ratio`, `-t` | `1` | Permitted extra training time ratio. Must be greater than `0`. |
+| `--jit-compile`, `--xla` | `False` | Enables the existing TensorFlow JIT/XLA setup path. Runtime success depends on CUDA/XLA environment setup. |
+| `--schedule` | `'cyclic'` | Training schedule. Choices: `cyclic`, `no-cycle`, `uniform`. |
+| `--no-cycle` | not set | Legacy alias for `--schedule no-cycle`. Mutually exclusive with `--schedule`. |
+| `--comments`, `-c` | `None` | Extra suffix for output filenames. |
+| `--temp` | `False` | Save temporary milestone files, then remove them when training completes. |
+| `--no-save` | not set | Disable final model and `.npy` history output. Final saving is enabled by default. |
 
-## Current Schedule
+Internal derived field:
 
-Default cyclic mode follows three ImageNet stages:
+| Field | Value |
+| --- | --- |
+| `cycle` | `True` when `schedule == 'cyclic'`, otherwise `False`. This is not a CLI flag. |
 
-| Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
+## Schedule Summary
+
+Common stage settings:
+
+| Stage | Resolution | Dropout | BL AMP | BL AMP+XLA |
 | --- | ---: | ---: | ---: | ---: |
 | 0 | 160 | 0.1 | 2330 | 2800 |
 | 1 | 224 | 0.2 | 1110 | 1400 |
 | 2 | 288 | 0.3 | 740 | 900 |
 
-Small-batch sizes are calculated at startup from:
+Milestones:
 
-- `world_size`
-- `--num-small`
-- `--additional-time-ratio`
-- the timing intercept/coefficient table in `parameter_server_3090.py`
+| Schedule | Stage behavior | LR/stage boundaries |
+| --- | --- | --- |
+| `cyclic` | Repeats stages `0 -> 1 -> 2` within each LR phase. | stage: `20,40,60,70,80,90,95,100,105`; LR: `60,90,105` |
+| `no-cycle` | One pass through stages `0 -> 1 -> 2`, aligned with original LR stages. | `60,90,105` |
+| `uniform` | One pass through stages `0 -> 1 -> 2`, equally split. | `35,70,105` |
 
-Training length is fixed at 105 epochs in distributed mini-epoch units:
+Training length is fixed at `105 * (world_size - 1)` global commits. Final milestone `105` marks the end of training; non-cyclic schedules do not wrap back to stage 0.
 
-- `mini_epochs = 105 * (world_size - 1)`
-- `cyclic` learning-rate decay milestones: epochs 60, 90, 105
-- `cyclic` stage milestones: epochs 20, 40, 60, 70, 80, 90, 95, 100, 105
-- `no-cycle` learning-rate/stage milestones: epochs 60, 90, 105
-- `uniform` learning-rate/stage milestones: epochs 35, 70, 105
-
-### `--schedule cyclic`
-
-This is the default paper hybrid schedule. It repeats progressive sub-stages inside each learning-rate stage:
-
-| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1-20 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
-| 21-40 | 0.2 | 1 | 224 | 0.2 | 1110 | 1400 |
-| 41-60 | 0.2 | 2 | 288 | 0.3 | 740 | 900 |
-| 61-70 | 0.02 | 0 | 160 | 0.1 | 2330 | 2800 |
-| 71-80 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
-| 81-90 | 0.02 | 2 | 288 | 0.3 | 740 | 900 |
-| 91-95 | 0.002 | 0 | 160 | 0.1 | 2330 | 2800 |
-| 96-100 | 0.002 | 1 | 224 | 0.2 | 1110 | 1400 |
-| 101-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
-
-### `--schedule no-cycle`
-
-This mode does not repeat the progressive sub-stage cycle. It uses each progressive stage once, aligned with the original learning-rate schedule:
-
-| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1-60 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
-| 61-90 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
-| 91-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
-
-### `--schedule uniform`
-
-This mode does not repeat the progressive sub-stage cycle. It splits the 105-epoch run into three equal stages:
-
-| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1-35 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
-| 36-70 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
-| 71-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
-
-Total epoch count and validation frequency are unchanged in all schedules. Final milestones at epoch 105 mark the end of training and do not wrap non-cyclic schedules back to stage 0.
+Small-batch sizes are calculated at startup from `world_size`, `--num-small`, `--additional-time-ratio`, and timing coefficients in `parameter_server_3090.py`.
 
 ## Output
 
@@ -186,24 +163,18 @@ By default, rank 0 saves:
 - `<outfile>_model`
 - `<outfile>.npy`
 
-The output name includes dataset, model depth, epoch count, time ratio, world-size/small-worker count, AMP/XLA flags, schedule, and optional comments.
-
-Use `--no-save` for dry runs that should not write final model/history files. Use `--temp` only when temporary milestone files are needed; they are cleaned up at the end of a normal run.
+The output filename includes dataset, model depth, epoch count, time ratio, world-size/small-worker count, AMP/XLA flags, schedule, and optional comments.
 
 ## Validation
 
-Run the lightweight checks from the repository root:
+Run from the repository root:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s train/ai_opt_code/tests -v
 python3 -B -m py_compile train/ai_opt_code/main_3090.py train/ai_opt_code/parameter_server_3090.py train/ai_opt_code/tf_data_model.py
 ```
 
-The parser tests verify default values, aliases, unsupported option rejection, and required argument validation. The schedule tests verify that `no-cycle` skips cyclic repeat milestones and that `uniform` advances stages at 35/70/105 epoch boundaries.
-
 ## Citation
-
-If you use this code in your research, please cite:
 
 ```bibtex
 @misc{lu2025efficientdistributedtrainingdual,
