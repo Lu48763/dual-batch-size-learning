@@ -17,6 +17,9 @@ class Server(object):
             raise ValueError('The dataset only allows "-d=imagenet"')
         
         self.args = args
+        if not hasattr(self.args, 'schedule'):
+            self.args.schedule = 'cyclic' if getattr(self.args, 'cycle', True) else 'no-cycle'
+        self.args.cycle = self.args.schedule == 'cyclic'
         self.start_time = time.perf_counter()
         self.mission_complete = False
         self.parameter_lock = threading.Lock()
@@ -48,7 +51,10 @@ class Server(object):
         self.large_data_amount, self.small_data_amount, self.small_batch_size_ls = self.get_large_small_dataAmount_batchSize()
         
         # Milestones
-        self.iter_milestones = np.array([60, 90, 105]) * (args.world_size - 1)
+        self.iter_milestones = (
+            np.array([35, 70, 105]) if self.args.schedule == 'uniform'
+            else np.array([60, 90, 105])
+        ) * (args.world_size - 1)
         self.cycle_milestones = np.array([20, 40, 60, 70, 80, 90, 95, 100, 105]) * (args.world_size - 1)
         
         # Parameter state
@@ -79,7 +85,7 @@ class Server(object):
             f'_t{("%.2f" % args.time_ratio).replace(".", "")}'
             f'_w{args.world_size}s{args.small}'
             f'{"_amp" if args.amp else ""}{"_xla" if args.xla else ""}'
-            f'{"" if args.cycle else "_noCycle"}'
+            f'_schedule-{self.args.schedule}'
             f'{"_" + args.comments if args.comments else ""}'
         )
         self.tempfile = f'temp_{self.outfile}'
@@ -143,9 +149,9 @@ class Server(object):
                         # Update parameters based on milestones
                         if self.global_commit_ID in self.iter_milestones:
                             self.step_idx += 1
-                            if not self.args.cycle:
+                            if self.args.schedule in ('no-cycle', 'uniform'):
                                 self.stage_idx = min(self.stage_idx + 1, len(self.resolution_ls) - 1)
-                        if self.args.cycle and self.global_commit_ID in self.cycle_milestones:
+                        if self.args.schedule == 'cyclic' and self.global_commit_ID in self.cycle_milestones:
                             self.stage_idx += 1
                         
                         self.parameter = self._update_parameter_dict()

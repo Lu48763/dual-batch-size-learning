@@ -38,7 +38,7 @@ For some machines, PyTorch RPC may bind to the wrong local hostname if `/etc/hos
 - `main_3090.py`: CLI parser, argument validation, TensorFlow AMP/XLA setup, GPU selection, and PyTorch RPC initialization.
 - `parameter_server_3090.py`: `Server` and `Worker` logic, dual-batch calculation, progressive resolution schedule, learning-rate milestones, validation logging, and output saving.
 - `tf_data_model.py`: TensorFlow data loaders and ResNet construction.
-- `tests/`: Lightweight regression tests for parser behavior and `--no-cycle` schedule behavior.
+- `tests/`: Lightweight regression tests for parser behavior and schedule behavior.
 
 ## Dataset Layout
 
@@ -107,8 +107,12 @@ Optional settings:
 - `--depth`: ResNet depth. Only `18` is accepted by the current parser.
 - `-t`, `--additional-time-ratio`, `--time-ratio`, `--ratio`: Permitted additional training time ratio. Default: `1`. Must be greater than `0`.
 - `--jit-compile`, `--xla`: Enables the existing TensorFlow JIT/XLA setup path. Actual runtime success still depends on the CUDA/XLA environment.
+- `--schedule {cyclic,no-cycle,uniform}`: Training schedule. Default: `cyclic`.
+  - `cyclic`: Paper hybrid cyclic progressive learning schedule.
+  - `no-cycle`: Non-cyclic progressive schedule aligned with the original learning-rate milestones.
+  - `uniform`: Non-cyclic progressive schedule split into three equal 35-epoch stages.
+- `--no-cycle`: Legacy alias for `--schedule no-cycle`. It cannot be combined with `--schedule`.
 - `-c`, `--comments`: Adds a suffix to saved output filenames.
-- `--no-cycle`: Disables cyclic repeats while keeping one-way progressive stage changes at learning-rate milestones.
 - `--temp`: Saves temporary model/log files at learning-rate milestones, then removes those temporary files when training completes.
 - `--no-save`: Disables final model and `.npy` history output.
 
@@ -132,10 +136,30 @@ Small-batch sizes are calculated at startup from:
 Training length is fixed at 105 epochs in distributed mini-epoch units:
 
 - `mini_epochs = 105 * (world_size - 1)`
-- learning-rate decay milestones: epochs 60, 90, 105
-- cyclic stage milestones: epochs 20, 40, 60, 70, 80, 90, 95, 100, 105
+- `cyclic` learning-rate decay milestones: epochs 60, 90, 105
+- `cyclic` stage milestones: epochs 20, 40, 60, 70, 80, 90, 95, 100, 105
+- `no-cycle` learning-rate/stage milestones: epochs 60, 90, 105
+- `uniform` learning-rate/stage milestones: epochs 35, 70, 105
 
-With `--no-cycle`, the run does not repeat the progressive sub-stage cycle. It uses each progressive stage once, aligned with the learning-rate schedule:
+### `--schedule cyclic`
+
+This is the default paper hybrid schedule. It repeats progressive sub-stages inside each learning-rate stage:
+
+| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1-20 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
+| 21-40 | 0.2 | 1 | 224 | 0.2 | 1110 | 1400 |
+| 41-60 | 0.2 | 2 | 288 | 0.3 | 740 | 900 |
+| 61-70 | 0.02 | 0 | 160 | 0.1 | 2330 | 2800 |
+| 71-80 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
+| 81-90 | 0.02 | 2 | 288 | 0.3 | 740 | 900 |
+| 91-95 | 0.002 | 0 | 160 | 0.1 | 2330 | 2800 |
+| 96-100 | 0.002 | 1 | 224 | 0.2 | 1110 | 1400 |
+| 101-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
+
+### `--schedule no-cycle`
+
+This mode does not repeat the progressive sub-stage cycle. It uses each progressive stage once, aligned with the original learning-rate schedule:
 
 | Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -143,7 +167,17 @@ With `--no-cycle`, the run does not repeat the progressive sub-stage cycle. It u
 | 61-90 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
 | 91-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
 
-Total epoch count and validation frequency are unchanged. The 105-epoch learning-rate milestone still marks the end of training and does not wrap the no-cycle schedule back to stage 0.
+### `--schedule uniform`
+
+This mode does not repeat the progressive sub-stage cycle. It splits the 105-epoch run into three equal stages:
+
+| Epoch range | Learning rate | Stage | Resolution | Dropout | Large batch size, AMP | Large batch size, AMP+XLA |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1-35 | 0.2 | 0 | 160 | 0.1 | 2330 | 2800 |
+| 36-70 | 0.02 | 1 | 224 | 0.2 | 1110 | 1400 |
+| 71-105 | 0.002 | 2 | 288 | 0.3 | 740 | 900 |
+
+Total epoch count and validation frequency are unchanged in all schedules. Final milestones at epoch 105 mark the end of training and do not wrap non-cyclic schedules back to stage 0.
 
 ## Output
 
@@ -152,7 +186,7 @@ By default, rank 0 saves:
 - `<outfile>_model`
 - `<outfile>.npy`
 
-The output name includes dataset, model depth, epoch count, time ratio, world-size/small-worker count, AMP/XLA flags, `noCycle` when applicable, and optional comments.
+The output name includes dataset, model depth, epoch count, time ratio, world-size/small-worker count, AMP/XLA flags, schedule, and optional comments.
 
 Use `--no-save` for dry runs that should not write final model/history files. Use `--temp` only when temporary milestone files are needed; they are cleaned up at the end of a normal run.
 
@@ -165,7 +199,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s train/ai_opt_code/t
 python3 -B -m py_compile train/ai_opt_code/main_3090.py train/ai_opt_code/parameter_server_3090.py train/ai_opt_code/tf_data_model.py
 ```
 
-The parser tests verify default values, aliases, unsupported option rejection, and required argument validation. The no-cycle tests verify that `--no-cycle` skips cyclic repeat milestones and advances stages only at learning-rate milestones.
+The parser tests verify default values, aliases, unsupported option rejection, and required argument validation. The schedule tests verify that `no-cycle` skips cyclic repeat milestones and that `uniform` advances stages at 35/70/105 epoch boundaries.
 
 ## Citation
 

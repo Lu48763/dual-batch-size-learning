@@ -11,7 +11,7 @@ from torch.distributed import rpc
 import parameter_server_3090 as ps
 
 # parser
-class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.MetavarTypeHelpFormatter):
+class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter):
     pass
 parser = argparse.ArgumentParser(
     description='Progressive Dual Batch Size Deep Learning for Distributed Parameter Server Systems',
@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser(
         'If the user wants to adjust low-level control options, modify the code. '
         'Required settings [--rank, --world-size, --server-addr] or [-r, -w, -a]. '
         'Rank 0 also requires [--dataset, --dir-path, --amp] or [-d, -p, --amp]. '
-        'Optional settings [--num-small, --time-ratio, --xla, --depth, --server-port, --no-cycle, --temp, --no-save].'
+        'Optional settings [--num-small, --time-ratio, --xla, --depth, --server-port, --schedule, --no-cycle, --temp, --no-save].'
     ),
     formatter_class=CustomFormatter,
 )
@@ -101,17 +101,26 @@ parser.add_argument(
     action='store_true',
     help='train with jit compile (xla)',
 )
+## training schedule
+schedule_group = parser.add_mutually_exclusive_group()
+schedule_group.add_argument(
+    '--schedule',
+    choices=['cyclic', 'no-cycle', 'uniform'],
+    default='cyclic',
+    help='training schedule: "cyclic" for paper hybrid CPL, "no-cycle" for LR-stage progressive schedule, "uniform" for three equal 35-epoch stages',
+)
+schedule_group.add_argument(
+    '--no-cycle',
+    dest='schedule',
+    action='store_const',
+    const='no-cycle',
+    help='legacy alias for "--schedule no-cycle"',
+)
 ## output files setting
 parser.add_argument(
     '--comments', '-c',
     type=str,
     help='add additional comments on filename',
-)
-parser.add_argument(
-    '--no-cycle',
-    dest='cycle',
-    action='store_false',
-    help='do not use all image resolutions with different learning rates',
 )
 parser.add_argument(
     '--temp',
@@ -149,7 +158,14 @@ def run_worker(ps_rref, args, rank, is_small_batch):
     print(f'Worker {rank} Training Complete')
 
 
+def normalize_schedule_args(args):
+    if not hasattr(args, 'schedule'):
+        args.schedule = 'cyclic' if getattr(args, 'cycle', True) else 'no-cycle'
+    args.cycle = args.schedule == 'cyclic'
+
+
 def validate_args(args):
+    normalize_schedule_args(args)
     if args.rank == None:
         raise ValueError('"rank" argument is required')
     if args.world_size == None:
@@ -237,5 +253,5 @@ if __name__ == '__main__':
     # args:
     # [rank, world_size, small, addr, port, time_ratio,
     #  dataset, dir_path, amp, xla, comments,
-    #  device_index, depth, cycle, temp, save]
+    #  device_index, depth, schedule, cycle, temp, save]
     main()
