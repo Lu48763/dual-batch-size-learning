@@ -1,0 +1,14 @@
+- bs from 5 to 500
+1. GTX-1080, CIFAR-100, resnet-18
+2. RTX-3090, CIFAR-100, resnet-18
+3. RTX-3090, ImageNet, resnet-18
+4. RTX-3090, ImageNet, resnet-34
+
+1,2 for different hardware
+2,3 for different dataset
+3,4 for different model
+
+- n large n small
+1. 1 large 1 small -- total 2
+2. 1 large 2 small -- total 3
+3. 2 large 1 small -- total 3
