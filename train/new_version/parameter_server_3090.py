@@ -239,15 +239,15 @@ class Worker(object):
                 self.step_ID = self.parameter['global_step_ID']
                 self.stage_ID = self.parameter['global_stage_ID']
                 
-                # Update dataloader with sharding
+                # Update dataloader. Worker data amounts are controlled by
+                # steps_per_epoch below, so the already-batched dataset must
+                # not be sharded again here.
                 self.dataloader = tf_data_model.load_data(
                     resolution=self.parameter['resolution'],
                     batch_size=self.parameter['small_batch_size'] if self.is_small_batch else self.parameter['large_batch_size'],
                     dataset=self.args.dataset,
                     dir_path=self.args.dir_path,
                     val_batch_size=self.parameter['large_batch_size'],
-                    num_shards=self.args.world_size - 1,
-                    shard_rank=self.rank - 1
                 )
                 
                 # Update model structure and transfer weights
@@ -300,6 +300,10 @@ class Worker(object):
                     'is_small_batch': self.is_small_batch
                 },
             )
+
+            # Validate the latest global model returned by the parameter
+            # server, rather than this worker's pre-sync local model.
+            self.model.set_weights(global_weights)
             
             # Evaluate after sync
             val_logs = self.model.evaluate(self.dataloader['val'], verbose=self.verbose, return_dict=True)
