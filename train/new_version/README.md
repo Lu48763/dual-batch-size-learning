@@ -40,7 +40,7 @@ ${dir_path}/imagenet/train/<class_id>/*.jpg
 ${dir_path}/imagenet/val/<class_id>/*.jpg
 ```
 
-Each worker independently shuffles the training dataset, and `steps_per_epoch` limits it to the large- or small-worker data allocation for each local commit. Validation uses the full validation set on every worker after each local commit.
+Training data is sharded across workers. Validation is not sharded; every worker evaluates on the full validation set after each local commit.
 
 ## Quick Start
 
