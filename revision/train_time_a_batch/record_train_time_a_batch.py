@@ -31,18 +31,18 @@ seed = 48763
 keras.utils.set_random_seed(seed)
 
 # Optimization Setting
-device_index = 2
+device_index = 0 #!!!! select GPU index for the test
 MIXED_PRECISION_FLAG = True
 JIT_COMPILE_FLAG = False # cause error
 
 # Data && Model Setting
 ## dataloader setting
-dataset = "cifar100" # ["cifar10", "cifar100", "imagenet"]
+dataset = "imagenet" # ["cifar10", "cifar100", "imagenet"]
 batch_size = 500 # (5, 500+1, 5) [32, 64, 128, 256, 512, 1024]
 depth = 18 # [18, 34]
 steps_per_epoch = 100
-start_bs = 10 # 10
-step_size = start_bs # 10
+start_bs = 5 # 5
+step_size = start_bs # 5
 ## auto setting
 dataset_size = 1_281_167 if dataset == "imagenet" else 50_000 if "cifar" in dataset else None
 resolution = 32 if "cifar" in dataset else 224

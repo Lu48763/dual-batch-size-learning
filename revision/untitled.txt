@@ -18,12 +18,30 @@
 
 ## n large n small
 
+### 1 worker
+0-1. 1 large 0 small -- total 1
+Sync from Worker 1 at Global Commit 104
+Worker 1 commit ID: 104, time: 83045.788, loss: 1.398, acc: 66.4%
+WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+
 ### 2 workers
 
-1-1. 1 large 1 small -- total 2
+1-1. 2 large 0 small -- total 2
+Sync from Worker 2 at Global Commit 209
+Worker 2 commit ID: 209, time: 47820.318, loss: 1.433, acc: 65.2%
+Worker 1 commit ID: 209, time: 47855.125, loss: 1.433, acc: 65.1%
+WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+
+1-2. 1 large 1 small -- total 2
 Sync from Worker 2 at Global Commit 209
 Worker 2 commit ID: 209, time: 52173.309, loss: 1.380, acc: 66.4%
 Worker 1 commit ID: 209, time: 52264.250, loss: 1.379, acc: 66.5%
+WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+
+1-3. 0 large 2 small -- total 2
+Sync from Worker 1 at Global Commit 209
+Worker 1 commit ID: 209, time: 48362.965, loss: 1.345, acc: 67.1%
+Worker 2 commit ID: 209, time: 48479.215, loss: 1.345, acc: 67.2%
 WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
 
 ### 3 workers
@@ -43,7 +61,22 @@ Worker 1 commit ID: 314, time: 42759.931, loss: 1.448, acc: 64.9%
 WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
 
 2-3. 1 large 2 small -- total 3
-??
-wait for read file
+Sync from Worker 1 at Global Commit 314
+Worker 1 commit ID: 314, time: 43561.217, loss: 1.395, acc: 66.0%
+Worker 2 commit ID: 314, time: 43608.149, loss: 1.391, acc: 66.0%
+Worker 3 commit ID: 314, time: 43967.037, loss: 1.393, acc: 65.9%
+WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
 
 2-4. 0 large 3 small -- total 3
+Sync from Worker 3 at Global Commit 314
+Worker 3 commit ID: 314, time: 40539.142, loss: 1.372, acc: 66.5%
+Worker 2 commit ID: 314, time: 40861.736, loss: 1.373, acc: 66.5%
+Worker 1 commit ID: 314, time: 40988.821, loss: 1.370, acc: 66.6%
+WARNING:tensorflow:Compiled the loaded model, but the compiled metrics have yet to be built. `model.compile_metrics` will be empty until you train or evaluate the model.
+
+### 4 workers retest
+Sync from Worker 3 at Global Commit 419
+Worker 3 commit ID: 419, time: 37207.109, loss: 1.416, acc: 65.5%
+Worker 2 commit ID: 419, time: 37334.725, loss: 1.419, acc: 65.4%
+Worker 1 commit ID: 419, time: 37392.244, loss: 1.417, acc: 65.4%
+Worker 4 commit ID: 419, time: 37647.785, loss: 1.422, acc: 65.3%
